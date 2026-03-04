@@ -1,0 +1,489 @@
+import { NextResponse } from 'next/server'
+import path from 'path'
+import fs from 'fs'
+import { spawn } from 'child_process'
+import Anthropic from '@anthropic-ai/sdk'
+import { supabase } from '@/lib/supabase'
+import type { ProductPrediction } from '@/types/trends'
+
+// Allow up to 10 minutes — scraping + sequential Claude batches take ~3–5 min
+export const maxDuration = 600
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
+
+const CACHE_FILE = path.join(process.cwd(), 'data', 'predictions-cache.json')
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const SCORING_BATCH_SIZE = 15
+
+interface RawProduct {
+  productName: string | null
+  imageUrl: string | null
+  productUrl: string | null
+  price: number | null
+  category: string
+  searchTerm: string
+  pageUrl: string
+}
+
+interface ScoredItem {
+  index: number
+  // 6-criteria scores (1–10)
+  priceQuality: number
+  innovation: number
+  practicalUtility: number
+  giftPotential: number
+  seasonalRelevance: number
+  viralPotential: number
+  // Derived 0–100 score
+  trendScore: number
+  // Text fields
+  reasoning: string
+  topSignals: string[]
+  targetAudience: string[]
+  season: string[]
+  contentAngles: string[]
+  platformBuzz: string
+  // Content concept
+  hook: string | null
+  contentConcept: string | null
+  videoFormat: string | null
+  requiresPerson: boolean
+  callToAction: string | null
+  musicSuggestion: string | null
+  engagementEstimate: number | null
+  conceptIdeas: Array<{ title: string; description: string; platform: string }> | null
+}
+
+interface PersistentCache {
+  cachedAt: string
+  predictions: ProductPrediction[]
+  supabaseRowCount: number
+}
+
+// ─── New Arrivals Pages ───────────────────────────────────────────────────────
+// Scrape the "Nieuw" section of Action.com — 5 pages × ~30 products = ~150 new products.
+
+const NIEUW_PAGES = [
+  'https://www.action.com/nl-nl/nieuw/',
+  'https://www.action.com/nl-nl/nieuw/?page=2',
+  'https://www.action.com/nl-nl/nieuw/?page=3',
+  'https://www.action.com/nl-nl/nieuw/?page=4',
+  'https://www.action.com/nl-nl/nieuw/?page=5',
+]
+
+const PLAYWRIGHT_TIMEOUT_MS = 70_000 // 70s per page (Python scraper needs ~30s)
+
+// ─── Cache ────────────────────────────────────────────────────────────────────
+
+function loadCache(): PersistentCache | null {
+  try {
+    return JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8')) as PersistentCache
+  } catch {
+    return null
+  }
+}
+
+function saveCache(entry: PersistentCache): void {
+  try {
+    fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true })
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(entry), 'utf-8')
+  } catch { /* non-fatal */ }
+}
+
+async function getSupabaseRowCount(): Promise<number> {
+  const { count } = await supabase
+    .from('Tiktok Data Action')
+    .select('*', { count: 'exact', head: true })
+  return count ?? 0
+}
+
+// ─── Season Hint ─────────────────────────────────────────────────────────────
+
+function getSeasonHint(): string {
+  const month = new Date().getMonth() + 1
+  if (month === 12 || month <= 2) {
+    return month === 2
+      ? "February: Valentine's winding down, spring-prep content begins. Spring cleaning, organisation, and fresh home decor are the next big wave."
+      : 'Winter: festive season winding down, new year organisation and home refresh are trending.'
+  }
+  if (month <= 5) return 'Spring: spring cleaning, Easter, garden, and outdoor living are trending. Fresh colours, plants, and storage products peak now.'
+  if (month <= 8) return 'Summer: outdoor living, garden, beach accessories, and summer home decor are trending.'
+  return 'Autumn/Winter: Halloween, Sinterklaas, Christmas, and gezellig home decor are trending. Candles, textiles, and seasonal decoration peak now.'
+}
+
+// ─── Live RSS Trend Fetching ──────────────────────────────────────────────────
+
+const RSS_SOURCES = [
+  // Original 5
+  { name: 'Google Trends NL',      url: 'https://trends.google.com/trends/trendingsearches/daily/rss?geo=NL' },
+  { name: 'Reddit /r/Netherlands',  url: 'https://www.reddit.com/r/thenetherlands/.rss' },
+  { name: 'Reddit OutOfTheLoop',    url: 'https://www.reddit.com/r/OutOfTheLoop/.rss' },
+  { name: 'Exploding Topics',       url: 'https://explodingtopics.com/blog/rss.xml' },
+  { name: 'Social Media Today',     url: 'https://www.socialmediatoday.com/rss.xml' },
+  // Added from action-trend-ai Lovable project
+  { name: 'Reddit TikTokCringe',    url: 'https://www.reddit.com/r/TikTokCringe/.rss' },
+  { name: 'MrToucan TikTok Trends', url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UC1SZ-1Ydb7Ri6zEOF0CcwrA' },
+  { name: 'Frankwatching NL',       url: 'https://www.frankwatching.com/feed/' },
+  { name: 'Later Blog',             url: 'https://later.com/blog/feed/' },
+]
+
+function parseRssTitles(xml: string): string[] {
+  const titles: string[] = []
+  const itemRegex = /<item[^>]*>([\s\S]*?)<\/item>/gi
+  let itemMatch: RegExpExecArray | null
+  while ((itemMatch = itemRegex.exec(xml)) !== null) {
+    const item = itemMatch[1]
+    const titleMatch = item.match(/<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i)
+    if (titleMatch) {
+      const title = titleMatch[1].trim()
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'")
+      if (title && title.length > 3) titles.push(title)
+    }
+  }
+  return titles
+}
+
+async function fetchLiveTrends(): Promise<string> {
+  const results = await Promise.allSettled(
+    RSS_SOURCES.map(async (source) => {
+      const res = await fetch(source.url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TrendBot/1.0)' },
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const xml = await res.text()
+      const titles = parseRssTitles(xml).slice(0, 12)
+      if (titles.length === 0) throw new Error('no titles parsed')
+      return `[${source.name}]\n${titles.map((t) => `- ${t}`).join('\n')}`
+    })
+  )
+  const successful = results.filter((r) => r.status === 'fulfilled') as PromiseFulfilledResult<string>[]
+  const summary = successful.map((r) => r.value).join('\n\n')
+  console.log(`[Live RSS] Fetched trend signals from ${successful.length}/${RSS_SOURCES.length} sources`)
+  return summary
+}
+
+// ─── Playwright New Arrivals Scraper ─────────────────────────────────────────
+// Uses the local Python/Playwright script — runs a real browser, bypasses bot detection.
+
+async function spawnBatchScraper(pageUrl: string, maxProducts: number): Promise<RawProduct[]> {
+  return new Promise((resolve) => {
+    const payload = JSON.stringify({ searchTerm: 'nieuw', category: 'Nieuw', maxProducts, pageUrl })
+    const scriptPath = path.join(process.cwd(), 'tools', 'scrape_action_batch.py')
+    const child = spawn('python3', [scriptPath, payload])
+
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+    child.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+
+    const killTimer = setTimeout(() => {
+      child.kill()
+      console.warn(`[Scraper] ${pageUrl} killed after ${PLAYWRIGHT_TIMEOUT_MS / 1000}s timeout`)
+      resolve([])
+    }, PLAYWRIGHT_TIMEOUT_MS)
+
+    child.on('close', (code: number | null) => {
+      clearTimeout(killTimer)
+      if (code !== 0) {
+        console.warn(`[Scraper] ${pageUrl} failed (code ${code}): ${stderr.slice(0, 200)}`)
+        return resolve([])
+      }
+      try {
+        const result = JSON.parse(stdout.trim()) as { products: RawProduct[]; count: number; error?: string }
+        if (result.error) {
+          console.warn(`[Scraper] ${pageUrl}: ${result.error}`)
+          return resolve([])
+        }
+        const products = (result.products ?? []).map((p) => ({ ...p, pageUrl }))
+        console.log(`[Scraper] ${pageUrl}: ${products.length} products`)
+        resolve(products)
+      } catch {
+        console.warn(`[Scraper] JSON parse error for ${pageUrl}: ${stdout.slice(0, 200)}`)
+        resolve([])
+      }
+    })
+
+    child.on('error', (err: Error) => {
+      clearTimeout(killTimer)
+      console.warn(`[Scraper] spawn error for ${pageUrl}: ${err.message}`)
+      resolve([])
+    })
+  })
+}
+
+async function scrapeNewArrivals(): Promise<RawProduct[]> {
+  console.log(`[Scraper] Scraping ${NIEUW_PAGES.length} new arrival pages via Playwright`)
+  const results = await Promise.all(NIEUW_PAGES.map((url) => spawnBatchScraper(url, 30)))
+  const allProducts = results.flat()
+  console.log(`[Scraper] Total new products scraped: ${allProducts.length}`)
+  return allProducts
+}
+
+// ─── Claude Batch Scoring ─────────────────────────────────────────────────────
+
+async function scoreBatch(
+  batch: RawProduct[],
+  globalOffset: number,
+  redditSummary: string,
+  tiktokSummary: string,
+  fbSummary: string,
+  liveTrendSummary: string,
+  seasonHint: string
+): Promise<ScoredItem[]> {
+  const catalog = batch.map((p, i) =>
+    `${i}: "${p.productName ?? 'Unknown'}" — ${p.price != null ? `€${p.price}` : 'price unknown'}`
+  ).join('\n')
+
+  const prompt = `Je bent een productanalist + contentstrateeg voor Action (budget retailer NL/BE, producten €0.50–€20).
+
+HUIDIG SEIZOEN: ${seasonHint}
+
+━━━ TREND SIGNALS ━━━
+
+LIVE TRENDS (RSS — fetched this session):
+${liveTrendSummary || 'No RSS data available'}
+
+REDDIT (Action publiek):
+${redditSummary || 'No data'}
+
+TIKTOK (Dutch Action content):
+${tiktokSummary || 'No data'}
+
+FACEBOOK (Action kopers groepen):
+${fbSummary || 'No data'}
+
+━━━ NIEUWE ACTION PRODUCTEN (${batch.length} stuks) ━━━
+${catalog}
+
+━━━ TAAK ━━━
+Beoordeel elk product op 6 criteria (schaal 1–10) én genereer content concept.
+
+CRITERIA:
+1. PRIJS-KWALITEIT: Wat krijg je voor het geld vs. alternatieven?
+2. INNOVATIE: Wat is uniek of vernieuwend aan dit product?
+3. PRAKTISCH NUT: Hoe vaak gebruikt? Welke problemen lost het op?
+4. CADEAU POTENTIE: Voor wie geschikt, bij welke gelegenheden?
+5. SEIZOEN RELEVANTIE: Hoe relevant nu in dit seizoen?
+6. VIRALE POTENTIE: Geschikt voor TikTok/Instagram/Facebook content? Welke formats?
+
+CONTENT CONCEPT (per product):
+- hook: pakkende Dutch TikTok opener (max 12 woorden, start met: POV, Wacht, Dit, Niemand, Ik, of een getal)
+- contentConcept: concrete 2-3 zin Dutch video concept (wat filmen, hoe presenteren, waarom het werkt)
+- videoFormat: "TikTok POV" / "Instagram Tutorial" / "Facebook DIY" / "TikTok Haul" etc.
+- requiresPerson: true als creator in beeld moet, false voor product-only content
+- callToAction: platform-specifieke CTA (bijv. "Link in bio →", "Sla op voor later!", "Tag een vriendin!")
+- musicSuggestion: passende muziek/sound tip (bijv. "Trending lente-geluid", "ASMR unboxing sfeer")
+- engagementEstimate: verwachte engagement score 1–10 voor dit platform
+- targetAudience: array uit ["teens","young_adults","adults","seniors","parents","students"]
+- conceptIdeas: array van PRECIES 3 Nederlandse content ideeën, elk met:
+  - title: korte pakkende titel (5–8 woorden, Dutch)
+  - description: 1–2 zinnen concrete invulling voor NL/BE markt
+  - platform: "TikTok" | "Instagram" | "Facebook"
+  Maak elk idee uniek qua format (niet 3× hetzelfde platform)
+
+Return ONLY a valid JSON array, one object per product in index order:
+[{"index":0,"priceQuality":8,"innovation":5,"practicalUtility":9,"giftPotential":6,"seasonalRelevance":8,"viralPotential":9,"trendScore":75,"reasoning":"1-2 zinnen waarom.","topSignals":["Google Trends NL: lente schoonmaak","TikTok: opruim hacks 80K views","Reddit NL: organisatie tips viral"],"targetAudience":["young_adults","students"],"season":["spring"],"contentAngles":["Haul","Before/After"],"platformBuzz":"tiktok","hook":"POV: dit kost maar €1 bij Action","contentConcept":"Open met een rommelige kast en sluit af met de opgeruimde versie. Voice-over: 'Ik heb €2 uitgegeven.' Gebruik trending opruim-geluid.","videoFormat":"TikTok POV","requiresPerson":false,"callToAction":"Sla op voor later!","musicSuggestion":"Trending lente clean-up geluid","engagementEstimate":8,"conceptIdeas":[{"title":"POV: €2 budget haul check","description":"Pak 3 producten uit en vergelijk ze live met duurdere alternatieven. Perfect voor korte 'value for money' content.","platform":"TikTok"},{"title":"Voor en na opruim challenge","description":"Laat zien hoe het product een rommelig hoekje transformeert. Gebruik trending organisatie-geluid.","platform":"Instagram"},{"title":"3 redenen waarom ik dit koop","description":"Casual talking-head video waarin je uitlegt waarom dit product handig is voor het gezin. Sluit af met een prijs reveal.","platform":"Facebook"}]}]
+
+Rules:
+- trendScore = Math.round(gemiddelde van de 6 scores × 10) — integer 0–100
+- topSignals: precies 3 strings die verwijzen naar echte data uit de trend signals hierboven
+- season: subset van ["spring","summer","autumn","winter"]
+- contentAngles: 1–3 uit ["Room tour","Haul","Before/After","DIY Tutorial","Styling","Unboxing","Gift Guide"]
+- platformBuzz: één van "tiktok","reddit","facebook","mixed"
+- Return ALL ${batch.length} objects — sla geen enkel product over
+- Return ONLY the JSON array`
+
+  // Retry up to 3 times with 65s backoff on rate limit (429) errors
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
+      console.log(`[Claude] Batch ${globalOffset}: rate limited — waiting 65s before retry ${attempt}/2`)
+      await new Promise((resolve) => setTimeout(resolve, 65_000))
+    }
+    let text: string
+    try {
+      const message = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 16000,
+        messages: [{ role: 'user', content: prompt }],
+      })
+      if (message.stop_reason === 'max_tokens') {
+        console.error(`[Claude] Batch ${globalOffset}: hit max_tokens limit — increase max_tokens or reduce SCORING_BATCH_SIZE`)
+      }
+      text = message.content[0].type === 'text' ? message.content[0].text.trim() : ''
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.includes('429') && attempt < 2) {
+        console.warn(`[Claude] Batch ${globalOffset}: 429 rate limited (attempt ${attempt + 1}/3)`)
+        continue
+      }
+      throw err
+    }
+
+    const arrayMatch = text.match(/\[[\s\S]*\]/)
+    if (!arrayMatch) {
+      const preview = text.slice(0, 400)
+      console.error(`[Claude] Batch ${globalOffset}: no JSON array found. Response preview:\n${preview}`)
+      throw new Error(`No JSON array in Claude response (offset ${globalOffset}). Preview: ${preview}`)
+    }
+
+    let parsed: ScoredItem[]
+    try {
+      parsed = JSON.parse(arrayMatch[0])
+    } catch (parseErr) {
+      const preview = arrayMatch[0].slice(0, 400)
+      console.error(`[Claude] Batch ${globalOffset}: JSON.parse failed. Preview:\n${preview}`)
+      throw new Error(`JSON parse failed (offset ${globalOffset}): ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`)
+    }
+    return parsed.map((item) => ({ ...item, index: item.index + globalOffset }))
+  }
+  throw new Error(`Batch ${globalOffset} failed after 3 attempts (persistent rate limit)`)
+}
+
+// ─── Main Prediction Pipeline ─────────────────────────────────────────────────
+
+async function runPrediction(): Promise<ProductPrediction[]> {
+  console.log('Fetching new Action products via Playwright + trend signals in parallel')
+
+  const [allProducts, redditResult, tiktokResult, fbResult, liveTrendSummary] = await Promise.all([
+    scrapeNewArrivals(),
+    supabase.from('redditdata').select('Titel, Beschrijving, Categorieën').limit(20),
+    supabase.from('Tiktok Data Action').select('Caption, Views, Likes, Shares, Zoekterm, Tags').limit(80),
+    supabase.from('FB data scraper').select('"Caption (text)", Likes, Comments, Shares, Groepsnaam, "Top comments"').limit(20),
+    fetchLiveTrends(),
+  ])
+
+  if (allProducts.length === 0) {
+    throw new Error('Playwright scrapers returned 0 products — check server logs for spawn errors')
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const redditSummary = ((redditResult.data ?? []) as any[]).map((r) =>
+    `[Reddit] ${r.Titel} (${r['Categorieën']})`
+  ).join('\n')
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tiktokSummary = ((tiktokResult.data ?? []) as any[]).map((r) =>
+    `[TikTok] ${r.Zoekterm}: "${(r.Caption ?? '').slice(0, 80)}" — ${r.Views ?? 0} views, ${r.Likes ?? 0} likes`
+  ).join('\n')
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fbSummary = ((fbResult.data ?? []) as any[]).map((r) =>
+    `[Facebook/${r.Groepsnaam}] "${(r['Caption (text)'] ?? '').slice(0, 80)}" — ${r.Likes ?? 0} likes, ${r.Comments ?? 0} comments`
+  ).join('\n')
+
+  const seasonHint = getSeasonHint()
+
+  // Score in batches of 15 (keeps output well within max_tokens budget)
+  const batches: RawProduct[][] = []
+  for (let i = 0; i < allProducts.length; i += SCORING_BATCH_SIZE) {
+    batches.push(allProducts.slice(i, i + SCORING_BATCH_SIZE))
+  }
+
+  // Run batches sequentially — required by Tier 1 rate limit (8K output tokens/minute).
+  // Each batch completes before the next starts, keeping the rolling window within limits.
+  const allScoredItems: ScoredItem[] = []
+  const batchErrors: string[] = []
+  for (let bi = 0; bi < batches.length; bi++) {
+    try {
+      console.log(`[Claude] Scoring batch ${bi + 1}/${batches.length} (products ${bi * SCORING_BATCH_SIZE}–${Math.min((bi + 1) * SCORING_BATCH_SIZE - 1, allProducts.length - 1)})`)
+      const items = await scoreBatch(
+        batches[bi],
+        bi * SCORING_BATCH_SIZE,
+        redditSummary,
+        tiktokSummary,
+        fbSummary,
+        liveTrendSummary,
+        seasonHint
+      )
+      allScoredItems.push(...items)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error(`[Claude] Scoring batch ${bi} failed:`, msg)
+      batchErrors.push(`Batch ${bi}: ${msg}`)
+    }
+  }
+
+  if (allScoredItems.length === 0) {
+    throw new Error(`All ${batches.length} Claude scoring batches failed.\n${batchErrors.join('\n')}`)
+  }
+
+  // Merge scores → top 100
+  const predictions: ProductPrediction[] = allScoredItems
+    .filter((item) => item.index >= 0 && item.index < allProducts.length)
+    .map((item) => {
+      const product = allProducts[item.index]
+      return {
+        productType:       product.category,
+        searchTerm:        product.searchTerm,
+        trendScore:        Math.min(100, Math.max(0, Math.round(item.trendScore))),
+        reasoning:         item.reasoning,
+        topSignals:        Array.isArray(item.topSignals) ? item.topSignals.slice(0, 3) : [],
+        productName:       product.productName,
+        imageUrl:          product.imageUrl,
+        productUrl:        product.productUrl || product.pageUrl,
+        price:             product.price,
+        category:          product.category,
+        season:            Array.isArray(item.season) ? item.season : [],
+        contentAngles:     Array.isArray(item.contentAngles) ? item.contentAngles : [],
+        platformBuzz:      item.platformBuzz ?? 'mixed',
+        hook:              item.hook ?? null,
+        contentConcept:    item.contentConcept ?? null,
+        // 6-criteria scores
+        priceQuality:      item.priceQuality ?? null,
+        innovation:        item.innovation ?? null,
+        practicalUtility:  item.practicalUtility ?? null,
+        giftPotential:     item.giftPotential ?? null,
+        seasonalRelevance: item.seasonalRelevance ?? null,
+        viralPotential:    item.viralPotential ?? null,
+        // Richer content concept
+        targetAudience:    Array.isArray(item.targetAudience) ? item.targetAudience : null,
+        videoFormat:       item.videoFormat ?? null,
+        requiresPerson:    item.requiresPerson ?? null,
+        callToAction:      item.callToAction ?? null,
+        musicSuggestion:   item.musicSuggestion ?? null,
+        engagementEstimate:item.engagementEstimate ?? null,
+      }
+    })
+    .sort((a, b) => b.trendScore - a.trendScore)
+    .slice(0, 100)
+
+  return predictions
+}
+
+// ─── GET Handler ──────────────────────────────────────────────────────────────
+
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url)
+  const forceRefresh = searchParams.get('refresh') === '1'
+
+  const currentCount = await getSupabaseRowCount()
+
+  if (!forceRefresh) {
+    const cached = loadCache()
+    if (cached) {
+      const age = Date.now() - new Date(cached.cachedAt).getTime()
+      const withinTTL = age < CACHE_TTL_MS
+      const noNewData = currentCount <= cached.supabaseRowCount
+      if (withinTTL && noNewData) {
+        return NextResponse.json({
+          predictions: cached.predictions,
+          cached: true,
+          cachedAt: cached.cachedAt,
+        })
+      }
+    }
+  }
+
+  try {
+    const predictions = await runPrediction()
+    saveCache({ cachedAt: new Date().toISOString(), predictions, supabaseRowCount: currentCount })
+    return NextResponse.json({ predictions, cached: false, cachedAt: new Date().toISOString() })
+  } catch (err) {
+    console.error('[TrendPredict] Error:', err)
+    return NextResponse.json(
+      { error: 'Er is een fout opgetreden bij het genereren van voorspellingen.', predictions: [] },
+      { status: 500 }
+    )
+  }
+}

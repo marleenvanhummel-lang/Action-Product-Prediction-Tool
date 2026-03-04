@@ -39,3 +39,18 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# WAT framework
+.tmp/
+__pycache__/
+*.pyc
+tools/.venv/
+
+# credentials
+credentials.json
+token.json
+
+# stored brand guidelines (local data, not committed)
+data/*.b64
+data/*.txt
+data/*.json
