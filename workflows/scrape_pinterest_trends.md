@@ -20,9 +20,10 @@ python3 tools/scrape_pinterest_trends.py '{"region": "NL"}'
 This outputs JSON to stdout and saves debug screenshots to `.tmp/`.
 
 ### 2. Upload to Supabase
-Pipe the output to the upload endpoint:
+Pipe the output to the upload endpoint (requires `API_SECRET` from `.env.local`):
 ```bash
-python3 tools/scrape_pinterest_trends.py '{"region": "NL"}' | curl -X POST http://localhost:3000/api/trends/pinterest -H "Content-Type: application/json" -d @-
+API_SECRET=$(grep "^API_SECRET=" .env.local | cut -d= -f2)
+python3 tools/scrape_pinterest_trends.py '{"region": "NL"}' | curl -X POST http://localhost:3000/api/trends/pinterest -H "Content-Type: application/json" -H "Authorization: Bearer $API_SECRET" -d @-
 ```
 
 ### 3. Verify
@@ -34,7 +35,8 @@ Check Supabase `pinterest_trends` table for new rows with the current week.
 |---|---|
 | Playwright not installed | `pip install playwright && playwright install chromium` |
 | 0 trends found | Check `.tmp/pinterest-trends-*.png` screenshots — page structure may have changed. Update selectors in `scrape_pinterest_trends.py` |
-| Upload fails | Ensure dev server is running and Supabase credentials are set in `.env.local` |
+| Upload fails (401) | Include `Authorization: Bearer $API_SECRET` header — all API routes require auth |
+| Upload fails (500) | Ensure dev server is running and Supabase credentials are set in `.env.local` |
 | Pinterest blocks scraper | Wait a few hours and retry. Don't run more than once per week. |
 
 ## Notes
