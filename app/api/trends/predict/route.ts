@@ -661,13 +661,16 @@ export async function GET(req: Request) {
     if (cached) {
       const age = Date.now() - new Date(cached.cachedAt).getTime()
       const withinTTL = age < CACHE_TTL_MS
-      const noNewData = currentCount <= cached.supabaseRowCount
-      if (withinTTL && noNewData) {
+      // Only check time-based TTL — ignore row count since daily scraping adds data but doesn't require re-analysis
+      if (withinTTL) {
+        console.log(`[TrendPredict] Cache valid (age: ${Math.floor(age / 1000 / 60)}min, TTL: 7 days)`)
         return NextResponse.json({
           predictions: cached.predictions,
           cached: true,
           cachedAt: cached.cachedAt,
         })
+      } else {
+        console.log(`[TrendPredict] Cache expired (age: ${Math.floor(age / 1000 / 60 / 60)}h, TTL: 7 days)`)
       }
     }
   }
