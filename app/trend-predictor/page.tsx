@@ -141,7 +141,7 @@ function SavedProvider({ children }: { children: React.ReactNode }) {
 
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
-type TabId = 'home' | 'saved' | 'trends' | 'rankings' | 'social' | 'pains-gains' | 'tiktok-nl'
+type TabId = 'home' | 'saved' | 'trends' | 'social' | 'pains-gains' | 'tiktok-nl'
 type SourceFilter = 'all' | 'reddit' | 'tiktok' | 'facebook' | 'pinterest'
 
 export default function TrendPredictorPage() {
@@ -180,7 +180,6 @@ function TrendPredictorInner() {
             { id: 'home', label: 'Home' },
             { id: 'saved', label: 'Opgeslagen', count: savedProducts.length },
             { id: 'trends', label: 'Trends' },
-            { id: 'rankings', label: 'Rankings' },
             { id: 'social', label: 'Social Data' },
             { id: 'pains-gains', label: 'Pains & Gains' },
             { id: 'tiktok-nl', label: 'TikTok NL' },
@@ -215,7 +214,6 @@ function TrendPredictorInner() {
       {activeTab === 'home' ? <HomeTab />
         : activeTab === 'saved' ? <SavedTab />
         : activeTab === 'trends' ? <TrendsTab />
-        : activeTab === 'rankings' ? <RankingsTab />
         : activeTab === 'social' ? <SocialDataTab />
         : activeTab === 'pains-gains' ? <PainsGainsTab />
         : <TikTokNLTab />}
@@ -1789,159 +1787,6 @@ function PinterestCard({ trend }: { trend: PinterestTrendRow }) {
   )
 }
 
-// ─── Rankings Tab ─────────────────────────────────────────────────────────────
-
-function RankingsTab() {
-  const [predictions, setPredictions] = useState<ProductPrediction[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [expanded, setExpanded] = useState<number | null>(null)
-  useEffect(() => {
-    // Try localStorage first (populated by HomeTab) for instant load
-    try {
-      const local = localStorage.getItem('predictions_cache_local')
-      if (local) {
-        const preds = JSON.parse(local)
-        if (Array.isArray(preds) && preds.length > 0) {
-          setPredictions(preds)
-          setLoading(false)
-          return
-        }
-      }
-    } catch { /* ignore */ }
-
-    // Fall back to Supabase cache (never triggers the full pipeline)
-    apiFetch('/api/trends/predict?cacheOnly=1')
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.error) throw new Error(data.error)
-        setPredictions(data.predictions ?? [])
-      })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false))
-  }, [])
-
-  if (loading) return <div className="px-8 py-12 text-center text-sm text-gray-500">Loading rankings…</div>
-  if (error) return <div className="px-8 py-6 text-sm text-red-600">{error}</div>
-  if (!predictions.length) return <div className="px-8 py-12 text-center text-sm text-gray-400">No data — run a prediction first on the Home tab.</div>
-
-  const CHART_HEIGHT = 110
-  const top5 = predictions.slice(0, 5)
-  const maxScore = Math.max(...top5.map((p) => p.trendScore), 1)
-
-  const scoreColor = (s: number) => s >= 75 ? '#dc2626' : s >= 50 ? '#f59e0b' : '#6b7280'
-
-  const CRITERIA: Array<{ key: keyof ProductPrediction; label: string }> = [
-    { key: 'priceQuality',      label: 'Prijs-kwaliteit' },
-    { key: 'innovation',        label: 'Innovatie' },
-    { key: 'practicalUtility',  label: 'Praktisch nut' },
-    { key: 'giftPotential',     label: 'Cadeau potentie' },
-    { key: 'seasonalRelevance', label: 'Seizoen' },
-    { key: 'viralPotential',    label: 'Viraal potentieel' },
-  ]
-
-  return (
-    <div className="px-8 py-6 space-y-6">
-      {/* Bar chart top 5 */}
-      <div className="rounded-xl border border-gray-200 bg-white p-5">
-        <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-4">Top 5 producten</p>
-        <div className="flex items-end gap-3">
-          {top5.map((p) => {
-            const barH = Math.max(4, Math.round((p.trendScore / maxScore) * CHART_HEIGHT))
-            const color = scoreColor(p.trendScore)
-            return (
-              <div key={p.productName ?? p.productType} className="flex flex-col items-center gap-1 flex-1">
-                <span className="text-xs font-bold" style={{ color }}>{p.trendScore}</span>
-                <div className="w-full rounded-t-md" style={{ height: barH, backgroundColor: color }} />
-                <span className="text-xs text-gray-500 text-center leading-tight line-clamp-2" style={{ maxWidth: 80 }}>
-                  {p.productName ?? p.productType}
-                </span>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Full ranked list — click to expand criteria */}
-      <div className="space-y-2">
-        {predictions.map((p, i) => {
-          const score = p.trendScore
-          const color = scoreColor(score)
-          const isOpen = expanded === i
-          return (
-            <div key={i} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              {/* Row header */}
-              <button
-                className="w-full flex items-center gap-4 px-4 py-3 text-left"
-                onClick={() => setExpanded(isOpen ? null : i)}
-              >
-                <span className="text-sm font-bold text-gray-300 w-6 text-right flex-shrink-0">{i + 1}</span>
-                {p.imageUrl && (
-                  <img src={p.imageUrl} alt="" className="w-10 h-10 object-cover rounded-lg flex-shrink-0"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-                )}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 truncate">{p.productName ?? p.productType}</p>
-                  <p className="text-xs text-gray-400 truncate">{p.topSignals?.[0] ?? p.platformBuzz}</p>
-                </div>
-                {p.price != null && (
-                  <span className="text-xs font-medium text-gray-500 flex-shrink-0">€{p.price.toFixed(2)}</span>
-                )}
-                <div className="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white"
-                  style={{ backgroundColor: color }}>
-                  {score}
-                </div>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2"
-                  className="flex-shrink-0 transition-transform"
-                  style={{ transform: isOpen ? 'rotate(180deg)' : 'none' }}>
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </button>
-
-              {/* Expanded criteria breakdown */}
-              {isOpen && (
-                <div className="px-4 pb-4 pt-1 border-t border-gray-100 space-y-3">
-                  {/* 6 criteria bars */}
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-                    {CRITERIA.map(({ key, label }) => {
-                      const val = p[key] as number | null | undefined
-                      if (val == null) return null
-                      const pct = (val / 10) * 100
-                      const barColor = val >= 7 ? '#16a34a' : val >= 4 ? '#f59e0b' : '#dc2626'
-                      return (
-                        <div key={key}>
-                          <div className="flex justify-between text-xs mb-0.5">
-                            <span className="text-gray-500">{label}</span>
-                            <span className="font-bold" style={{ color: barColor }}>{val}/10</span>
-                          </div>
-                          <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
-                            <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: barColor }} />
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                  {/* Reasoning */}
-                  {p.reasoning && (
-                    <p className="text-xs text-gray-600 leading-relaxed">{p.reasoning}</p>
-                  )}
-                  {/* Top signals */}
-                  {p.topSignals?.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {p.topSignals.map((s, j) => (
-                        <span key={j} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{s}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
 
 // ─── Social Data Tab ──────────────────────────────────────────────────────────
 
