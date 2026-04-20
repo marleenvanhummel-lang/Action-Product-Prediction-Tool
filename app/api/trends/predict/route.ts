@@ -55,6 +55,24 @@ interface PersistentCache {
   supabaseRowCount: number
 }
 
+// ─── Unicode Sanitization ───────────────────────────────────────────────────
+
+/**
+ * Sanitize strings for JSON encoding to prevent "no low surrogate" errors.
+ * Removes or replaces problematic Unicode characters (emojis, unpaired surrogates).
+ */
+function sanitizeForJSON(text: string | null | undefined): string {
+  if (!text) return ''
+  return text
+    // Remove emoji and other high Unicode ranges (keep Latin letters, numbers, common punctuation)
+    .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '') // Surrogate pairs (emoji)
+    .replace(/[\uD800-\uDBFF]/g, '?') // Unpaired high surrogates
+    .replace(/[\uDC00-\uDFFF]/g, '?') // Unpaired low surrogates
+    // Keep common Dutch/European characters, remove control characters
+    .replace(/[\x00-\x09\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .trim()
+}
+
 // ─── New Arrivals Pages ───────────────────────────────────────────────────────
 
 const NIEUW_PAGES = [
@@ -161,9 +179,9 @@ async function fetchPinterestTrends(): Promise<string> {
   // Group by category
   const grouped: Record<string, string[]> = {}
   for (const row of data) {
-    const cat = (row.category ?? 'other').toUpperCase().replace(/-/g, ' ')
+    const cat = sanitizeForJSON((row.category ?? 'other')).toUpperCase().replace(/-/g, ' ')
     if (!grouped[cat]) grouped[cat] = []
-    const entry = row.growth_raw ? `${row.keyword} (${row.growth_raw})` : row.keyword
+    const entry = row.growth_raw ? `${sanitizeForJSON(row.keyword)} (${row.growth_raw})` : sanitizeForJSON(row.keyword)
     grouped[cat].push(entry)
   }
 
@@ -213,7 +231,7 @@ async function fetchLiveTrends(): Promise<string> {
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const xml = await res.text()
-      const titles = parseRssTitles(xml).slice(0, 12)
+      const titles = parseRssTitles(xml).slice(0, 12).map(t => sanitizeForJSON(t))
       if (titles.length === 0) throw new Error('no titles parsed')
       return `[${source.name}]\n${titles.map((t) => `- ${t}`).join('\n')}`
     })
@@ -410,33 +428,42 @@ async function scoreBatch(
   seasonHint: string,
   pinterestSummary: string
 ): Promise<ScoredItem[]> {
-  const catalog = batch.map((p, i) =>
-    `${i}: "${p.productName ?? 'Unknown'}" — ${p.price != null ? `€${p.price}` : 'price unknown'}`
-  ).join('\n')
+  // Sanitize all strings to prevent JSON encoding errors from emojis/invalid Unicode
+  const sanitized = {
+    catalog: batch.map((p, i) =>
+      `${i}: "${sanitizeForJSON(p.productName ?? 'Unknown')}" — ${p.price != null ? `€${p.price}` : 'price unknown'}`
+    ).join('\n'),
+    season: sanitizeForJSON(seasonHint),
+    live: sanitizeForJSON(liveTrendSummary) || 'No RSS data available',
+    reddit: sanitizeForJSON(redditSummary) || 'No data',
+    tiktok: sanitizeForJSON(tiktokSummary) || 'No data',
+    facebook: sanitizeForJSON(fbSummary) || 'No data',
+    pinterest: sanitizeForJSON(pinterestSummary) || 'No data',
+  }
 
   const prompt = `Je bent een productanalist + contentstrateeg voor Action (budget retailer NL/BE, producten €0.50–€20).
 
-HUIDIG SEIZOEN: ${seasonHint}
+HUIDIG SEIZOEN: ${sanitized.season}
 
 ━━━ TREND SIGNALS ━━━
 
 LIVE TRENDS (RSS — fetched this session):
-${liveTrendSummary || 'No RSS data available'}
+${sanitized.live}
 
 REDDIT (Action publiek):
-${redditSummary || 'No data'}
+${sanitized.reddit}
 
 TIKTOK (Dutch Action content):
-${tiktokSummary || 'No data'}
+${sanitized.tiktok}
 
 FACEBOOK (Action kopers groepen):
-${fbSummary || 'No data'}
+${sanitized.facebook}
 
 PINTEREST TRENDS (planning intent — wat NL consumenten zoeken/pinnen):
-${pinterestSummary || 'No data'}
+${sanitized.pinterest}
 
 ━━━ NIEUWE ACTION PRODUCTEN (${batch.length} stuks) ━━━
-${catalog}
+${sanitized.catalog}
 
 ━━━ TAAK ━━━
 Beoordeel elk product op 6 criteria (schaal 1–10) én genereer content concept.
@@ -547,17 +574,17 @@ async function runPrediction(): Promise<ProductPrediction[]> {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const redditSummary = ((redditResult.data ?? []) as any[]).map((r) =>
-    `[Reddit] ${r.Titel} (${r['Categorieën']})`
+    `[Reddit] ${sanitizeForJSON(r.Titel)} (${sanitizeForJSON(r['Categorieën'])})`
   ).join('\n')
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tiktokSummary = ((tiktokResult.data ?? []) as any[]).map((r) =>
-    `[TikTok] ${r.Zoekterm}: "${(r.Caption ?? '').slice(0, 80)}" — ${r.Views ?? 0} views, ${r.Likes ?? 0} likes`
+    `[TikTok] ${sanitizeForJSON(r.Zoekterm)}: "${sanitizeForJSON((r.Caption ?? '').slice(0, 80))}" — ${r.Views ?? 0} views, ${r.Likes ?? 0} likes`
   ).join('\n')
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fbSummary = ((fbResult.data ?? []) as any[]).map((r) =>
-    `[Facebook/${r.Groepsnaam}] "${(r['Caption (text)'] ?? '').slice(0, 80)}" — ${r.Likes ?? 0} likes, ${r.Comments ?? 0} comments`
+    `[Facebook/${sanitizeForJSON(r.Groepsnaam)}] "${sanitizeForJSON((r['Caption (text)'] ?? '').slice(0, 80))}" — ${r.Likes ?? 0} likes, ${r.Comments ?? 0} comments`
   ).join('\n')
 
   const seasonHint = getSeasonHint()
