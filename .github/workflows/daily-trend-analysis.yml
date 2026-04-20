@@ -43,7 +43,7 @@ jobs:
             echo "⚠️ Skipping Pinterest scraping - localhost URL detected"
           else
             echo "📌 Scraping Pinterest trends..."
-            
+
             # Run Pinterest scraper and upload to API
             python tools/scrape_pinterest_trends.py '{"region": "NL"}' | \
             curl -s -X POST \
@@ -52,7 +52,7 @@ jobs:
               -H "x-api-key: ${{ secrets.PINTEREST_UPLOAD_KEY }}" \
               "${{ secrets.TREND_ANALYSIS_URL }}/api/trends/pinterest" \
               -d @-
-            
+
             echo "✅ Pinterest trends scraped and uploaded"
           fi
 
@@ -63,7 +63,7 @@ jobs:
             echo "⚠️ Skipping TikTok scraping - localhost URL detected"
           else
             echo "🎵 Scraping TikTok data..."
-            
+
             # Run TikTok scraper and upload to API
             python tools/scrape_tiktok_data.py | \
             curl -s -X POST \
@@ -72,7 +72,7 @@ jobs:
               -H "x-api-key: ${{ secrets.API_SECRET }}" \
               "${{ secrets.TREND_ANALYSIS_URL }}/api/trends/tiktok-upload" \
               -d @-
-            
+
             echo "✅ TikTok data scraped and uploaded"
           fi
 
@@ -83,7 +83,7 @@ jobs:
             echo "⚠️ Skipping Facebook scraping - localhost URL detected"
           else
             echo "📘 Scraping Facebook data..."
-            
+
             # Run Facebook scraper and upload to API
             python tools/scrape_facebook_data.py | \
             curl -s -X POST \
@@ -92,7 +92,7 @@ jobs:
               -H "x-api-key: ${{ secrets.API_SECRET }}" \
               "${{ secrets.TREND_ANALYSIS_URL }}/api/trends/facebook-upload" \
               -d @-
-            
+
             echo "✅ Facebook data scraped and uploaded"
           fi
 
@@ -103,7 +103,7 @@ jobs:
             echo "⚠️ Skipping Reddit scraping - localhost URL detected"
           else
             echo "🟠 Scraping Reddit data..."
-            
+
             # Run Reddit scraper and upload to API
             python tools/scrape_reddit_data.py | \
             curl -s -X POST \
@@ -112,7 +112,7 @@ jobs:
               -H "x-api-key: ${{ secrets.API_SECRET }}" \
               "${{ secrets.TREND_ANALYSIS_URL }}/api/trends/reddit-upload" \
               -d @-
-            
+
             echo "✅ Reddit data scraped and uploaded"
           fi
 
@@ -124,9 +124,9 @@ jobs:
             echo "Set TREND_ANALYSIS_URL to your production URL in repository secrets."
             exit 0
           fi
-          
+
           echo "🌐 Triggering trend analysis at ${{ secrets.TREND_ANALYSIS_URL }}"
-          
+
           # Make the API call with timeout and error handling
           response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
             -X POST \
@@ -134,13 +134,13 @@ jobs:
             -H "Content-Type: application/json" \
             --max-time 600 \
             "${{ secrets.TREND_ANALYSIS_URL }}/api/trends/schedule-run")
-          
+
           # Extract status code
           http_status=$(echo "$response" | grep "HTTP_STATUS:" | cut -d: -f2)
           response_body=$(echo "$response" | sed '/HTTP_STATUS:/d')
-          
+
           echo "📡 Response status: $http_status"
-          
+
           if [[ "$http_status" == "200" ]]; then
             echo "✅ Analysis triggered successfully"
             echo "Response: $response_body"

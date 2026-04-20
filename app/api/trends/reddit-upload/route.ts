@@ -4,7 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export async function POST(req: Request) {
   // Simple API key check
   const apiKey = req.headers.get('x-api-key')
-  const expectedKey = process.env.API_SECRET  // Using same key as other endpoints
+  const expectedKey = process.env.API_SECRET
   if (expectedKey && apiKey !== expectedKey) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
