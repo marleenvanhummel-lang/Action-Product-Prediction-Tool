@@ -56,6 +56,66 @@ jobs:
             echo "✅ Pinterest trends scraped and uploaded"
           fi
 
+      - name: Scrape TikTok Data
+        run: |
+          # Check if URL is localhost (development) - skip if so
+          if [[ "${{ secrets.TREND_ANALYSIS_URL }}" == *"localhost"* ]]; then
+            echo "⚠️ Skipping TikTok scraping - localhost URL detected"
+          else
+            echo "🎵 Scraping TikTok data..."
+            
+            # Run TikTok scraper and upload to API
+            python tools/scrape_tiktok_data.py | \
+            curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${{ secrets.TREND_ANALYSIS_SECRET }}" \
+              -H "x-api-key: ${{ secrets.API_SECRET }}" \
+              "${{ secrets.TREND_ANALYSIS_URL }}/api/trends/tiktok-upload" \
+              -d @-
+            
+            echo "✅ TikTok data scraped and uploaded"
+          fi
+
+      - name: Scrape Facebook Data
+        run: |
+          # Check if URL is localhost (development) - skip if so
+          if [[ "${{ secrets.TREND_ANALYSIS_URL }}" == *"localhost"* ]]; then
+            echo "⚠️ Skipping Facebook scraping - localhost URL detected"
+          else
+            echo "📘 Scraping Facebook data..."
+            
+            # Run Facebook scraper and upload to API
+            python tools/scrape_facebook_data.py | \
+            curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${{ secrets.TREND_ANALYSIS_SECRET }}" \
+              -H "x-api-key: ${{ secrets.API_SECRET }}" \
+              "${{ secrets.TREND_ANALYSIS_URL }}/api/trends/facebook-upload" \
+              -d @-
+            
+            echo "✅ Facebook data scraped and uploaded"
+          fi
+
+      - name: Scrape Reddit Data
+        run: |
+          # Check if URL is localhost (development) - skip if so
+          if [[ "${{ secrets.TREND_ANALYSIS_URL }}" == *"localhost"* ]]; then
+            echo "⚠️ Skipping Reddit scraping - localhost URL detected"
+          else
+            echo "🟠 Scraping Reddit data..."
+            
+            # Run Reddit scraper and upload to API
+            python tools/scrape_reddit_data.py | \
+            curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${{ secrets.TREND_ANALYSIS_SECRET }}" \
+              -H "x-api-key: ${{ secrets.API_SECRET }}" \
+              "${{ secrets.TREND_ANALYSIS_URL }}/api/trends/reddit-upload" \
+              -d @-
+            
+            echo "✅ Reddit data scraped and uploaded"
+          fi
+
       - name: Trigger Trend Analysis
         run: |
           # Check if URL is localhost (development) - skip if so
