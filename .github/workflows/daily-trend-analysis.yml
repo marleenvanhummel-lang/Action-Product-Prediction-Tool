@@ -1,0 +1,29 @@
+name: Daily Trend Analysis
+
+on:
+  schedule:
+    # Run every day at 08:30 UTC (= 09:30 CET / 10:30 CEST)
+    - cron: '30 8 * * *'
+  # Also allow manual trigger via GitHub UI
+  workflow_dispatch:
+
+jobs:
+  run-trend-analysis:
+    runs-on: ubuntu-latest
+    name: Trigger trend prediction analysis
+
+    steps:
+      - name: Trigger scheduled analysis
+        run: |
+          curl -X POST \
+            -H "Authorization: Bearer ${{ secrets.TREND_ANALYSIS_SECRET }}" \
+            -H "Content-Type: application/json" \
+            "${{ secrets.TREND_ANALYSIS_URL }}/api/trends/schedule-run"
+
+      - name: Log result
+        if: success()
+        run: echo "✅ Trend analysis completed successfully at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+      - name: Log failure
+        if: failure()
+        run: echo "❌ Trend analysis failed - check server logs"

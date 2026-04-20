@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f2f3f5;
+  --foreground: #111318;
+  --action-red: #E3000F;
+  --action-red-dark: #b8000c;
+  --action-red-light: #ff1a27;
+  --sidebar-width: 224px;
+  --sidebar-bg: #111318;
+  --sidebar-border: #1e2128;
+  --font-display: 'Barlow Condensed', sans-serif;
+  --font-body: 'DM Sans', sans-serif;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-action-red: var(--action-red);
+  --color-action-red-dark: var(--action-red-dark);
+  --font-sans: var(--font-body);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body);
+  margin: 0;
+  padding: 0;
+}
+
+/* Indeterminate progress bar animation */
+@keyframes indeterminate-slide {
+  0%   { transform: translateX(-150%); }
+  50%  { transform: translateX(100%); }
+  100% { transform: translateX(250%); }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #e8e9eb;
+}
+::-webkit-scrollbar-thumb {
+  background: #c4c6ca;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9a9da6;
+}
