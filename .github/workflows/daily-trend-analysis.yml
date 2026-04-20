@@ -13,7 +13,50 @@ jobs:
     name: Trigger trend prediction analysis
 
     steps:
-      - name: Trigger scheduled analysis
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tools/requirements.txt
+          playwright install chromium
+
+      - name: Scrape Pinterest Trends
+        run: |
+          # Check if URL is localhost (development) - skip if so
+          if [[ "${{ secrets.TREND_ANALYSIS_URL }}" == *"localhost"* ]]; then
+            echo "⚠️ Skipping Pinterest scraping - localhost URL detected"
+          else
+            echo "📌 Scraping Pinterest trends..."
+            
+            # Run Pinterest scraper and upload to API
+            python tools/scrape_pinterest_trends.py '{"region": "NL"}' | \
+            curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${{ secrets.TREND_ANALYSIS_SECRET }}" \
+              -H "x-api-key: ${{ secrets.PINTEREST_UPLOAD_KEY }}" \
+              "${{ secrets.TREND_ANALYSIS_URL }}/api/trends/pinterest" \
+              -d @-
+            
+            echo "✅ Pinterest trends scraped and uploaded"
+          fi
+
+      - name: Trigger Trend Analysis
         run: |
           # Check if URL is localhost (development) - skip if so
           if [[ "${{ secrets.TREND_ANALYSIS_URL }}" == *"localhost"* ]]; then
@@ -22,7 +65,7 @@ jobs:
             exit 0
           fi
           
-          echo "🌐 Triggering analysis at ${{ secrets.TREND_ANALYSIS_URL }}"
+          echo "🌐 Triggering trend analysis at ${{ secrets.TREND_ANALYSIS_URL }}"
           
           # Make the API call with timeout and error handling
           response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
@@ -49,8 +92,8 @@ jobs:
 
       - name: Log result
         if: success()
-        run: echo "✅ Trend analysis completed successfully at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        run: echo "✅ Daily analysis completed successfully at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
       - name: Log failure
         if: failure()
-        run: echo "❌ Trend analysis failed - check server logs and secrets configuration"
+        run: echo "❌ Daily analysis failed - check server logs and secrets configuration"
