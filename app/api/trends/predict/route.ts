@@ -7,8 +7,11 @@ import type { ProductPrediction } from '@/types/trends'
 
 export const maxDuration = 300
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
-const firecrawl = new FirecrawlApp({ apiKey: process.env.FIRECRAWL_API_KEY ?? '' })
+// Strip any whitespace/control characters that can break HTTP headers
+const cleanKey = (k: string | undefined) => (k ?? '').replace(/[\s\u0000-\u001F\u007F]/g, '')
+
+const anthropic = new Anthropic({ apiKey: cleanKey(process.env.ANTHROPIC_API_KEY) })
+const firecrawl = new FirecrawlApp({ apiKey: cleanKey(process.env.FIRECRAWL_API_KEY) })
 
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const SCORING_BATCH_SIZE = 15
