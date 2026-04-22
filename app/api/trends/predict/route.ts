@@ -388,19 +388,28 @@ If no products found, return []`
   }
 
   console.error(`[Firecrawl] ${pageUrl}: all ${MAX_RETRIES} attempts failed. Last error: ${lastError?.message}`)
-  return []
+  throw lastError ?? new Error(`Firecrawl scrape of ${pageUrl} failed for unknown reason`)
 }
 
 async function scrapeNewArrivals(): Promise<RawProduct[]> {
   console.log(`[Firecrawl] Scraping ${NIEUW_PAGES.length} new arrival pages in parallel`)
-  // Scrape pages in parallel (Firecrawl handles rate limits)
+  const hasKey = Boolean(process.env.FIRECRAWL_API_KEY && process.env.FIRECRAWL_API_KEY.trim())
+  if (!hasKey) {
+    throw new Error('FIRECRAWL_API_KEY is missing or empty on this deployment. Check Vercel env vars (exact name, Production scope enabled, no extra whitespace).')
+  }
+
   const results = await Promise.allSettled(NIEUW_PAGES.map((url) => scrapePageWithFirecrawl(url)))
-  
-  results.forEach((r, i) =>
-    r.status === 'fulfilled'
-      ? console.log(`[Firecrawl] Page ${i + 1}: ${r.value.length} products`)
-      : console.error(`[Firecrawl] Page ${i + 1}: error - ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`)
-  )
+
+  const pageErrors: string[] = []
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') {
+      console.log(`[Firecrawl] Page ${i + 1}: ${r.value.length} products`)
+    } else {
+      const msg = r.reason instanceof Error ? r.reason.message : String(r.reason)
+      console.error(`[Firecrawl] Page ${i + 1}: error - ${msg}`)
+      pageErrors.push(`Page ${i + 1}: ${msg}`)
+    }
+  })
 
   // Surface fatal errors (e.g. Anthropic credits) instead of burying them
   const fatalError = results.find((r): r is PromiseRejectedResult => {
@@ -413,6 +422,12 @@ async function scrapeNewArrivals(): Promise<RawProduct[]> {
   const fulfilled = results.filter((r): r is PromiseFulfilledResult<RawProduct[]> => r.status === 'fulfilled')
   const allProducts = fulfilled.flatMap((r) => r.value)
   console.log(`[Firecrawl] Total products scraped: ${allProducts.length} from ${fulfilled.length}/${NIEUW_PAGES.length} pages`)
+
+  // If we got nothing AND all pages errored, surface the actual errors so caller can report them
+  if (allProducts.length === 0 && pageErrors.length > 0) {
+    throw new Error(`Firecrawl returned no products. Errors per page: ${pageErrors.join(' | ')}`)
+  }
+
   return allProducts
 }
 
