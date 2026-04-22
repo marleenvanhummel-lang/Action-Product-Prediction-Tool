@@ -1,14 +1,6 @@
 import { NextResponse } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
-import FirecrawlApp from '@mendable/firecrawl-js'
-import { supabaseAdmin } from '@/lib/supabase-admin'
 
-// Import types and helper functions from the main predict endpoint
-// We'll duplicate what we need since the main endpoint doesn't export these helpers
 export const maxDuration = 300
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
-const firecrawl = new FirecrawlApp({ apiKey: process.env.FIRECRAWL_API_KEY ?? '' })
 
 // Authorization check: accepts either API_SECRET (manual) or CRON_SECRET (Vercel Cron)
 async function authorize(req: Request): Promise<boolean> {
@@ -27,19 +19,34 @@ async function authorize(req: Request): Promise<boolean> {
   return false
 }
 
-async function runDailyPrediction(): Promise<{ predictionsCount: number }> {
+async function runDailyPrediction(): Promise<{ predictionsCount: number; painsGainsRefreshed: boolean }> {
   console.log('[ScheduleRun] Daily scheduled analysis triggered at', new Date().toISOString())
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
-  const predictUrl = `${baseUrl}/api/trends/predict?refresh=1`
+  const auth = `Bearer ${process.env.API_SECRET}`
 
-  const response = await fetch(predictUrl, {
+  const predictRes = await fetch(`${baseUrl}/api/trends/predict?refresh=1`, {
     method: 'GET',
-    headers: { 'Authorization': `Bearer ${process.env.API_SECRET}` },
+    headers: { 'Authorization': auth },
   })
-  if (!response.ok) throw new Error(`Predict endpoint returned ${response.status}`)
-  const result = await response.json()
-  console.log('[ScheduleRun] Analysis complete:', result.predictions?.length, 'predictions cached')
-  return { predictionsCount: result.predictions?.length || 0 }
+  if (!predictRes.ok) throw new Error(`Predict endpoint returned ${predictRes.status}`)
+  const predictResult = await predictRes.json()
+  const predictionsCount = predictResult.predictions?.length || 0
+  console.log('[ScheduleRun] Predictions done:', predictionsCount)
+
+  let painsGainsRefreshed = false
+  try {
+    const pgRes = await fetch(`${baseUrl}/api/trends/pains-gains?refresh=1`, {
+      method: 'GET',
+      headers: { 'Authorization': auth },
+    })
+    painsGainsRefreshed = pgRes.ok
+    if (!pgRes.ok) console.warn(`[ScheduleRun] Pains/gains returned ${pgRes.status}`)
+    else console.log('[ScheduleRun] Pains/gains refreshed')
+  } catch (err) {
+    console.warn('[ScheduleRun] Pains/gains refresh failed (non-fatal):', err instanceof Error ? err.message : String(err))
+  }
+
+  return { predictionsCount, painsGainsRefreshed }
 }
 
 /**

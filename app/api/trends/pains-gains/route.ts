@@ -1,10 +1,33 @@
 import { NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabase } from '@/lib/supabase'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const maxDuration = 60
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
+
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
+const CACHE_ID = 'pains_gains'
+
+async function loadPainsCache(): Promise<{ cachedAt: string; result: PainsGainsResult } | null> {
+  const { data, error } = await supabaseAdmin
+    .from('predictions_cache')
+    .select('*')
+    .eq('id', CACHE_ID)
+    .single()
+  if (error || !data) return null
+  return { cachedAt: data.cached_at, result: data.predictions as PainsGainsResult }
+}
+
+async function savePainsCache(result: PainsGainsResult): Promise<void> {
+  await supabaseAdmin.from('predictions_cache').upsert({
+    id: CACHE_ID,
+    cached_at: new Date().toISOString(),
+    predictions: result,
+    supabase_row_count: 0,
+  })
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = Record<string, any>
@@ -28,7 +51,20 @@ export interface PainsGainsResult {
   posts: SourcePost[]
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url)
+  const forceRefresh = searchParams.get('refresh') === '1'
+
+  if (!forceRefresh) {
+    const cached = await loadPainsCache()
+    if (cached) {
+      const age = Date.now() - new Date(cached.cachedAt).getTime()
+      if (age < CACHE_TTL_MS) {
+        return NextResponse.json(cached.result)
+      }
+    }
+  }
+
   const [fbRes, tiktokRes, redditRes] = await Promise.all([
     supabase.from('FB data scraper').select('"Caption (text)", "Facebook URL"').limit(60),
     supabase.from('Tiktok Data Action').select('Caption, "Video URL"').limit(80),
@@ -96,6 +132,12 @@ Rules:
     gains: clamp(parsed.gains ?? []),
     pains: clamp(parsed.pains ?? []),
     posts: sourcePosts,
+  }
+
+  try {
+    await savePainsCache(result)
+  } catch (err) {
+    console.warn('[PainsGains] Failed to save cache (non-fatal):', err instanceof Error ? err.message : String(err))
   }
 
   return NextResponse.json(result)
