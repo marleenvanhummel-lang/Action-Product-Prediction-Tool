@@ -52,8 +52,8 @@ export interface PainsGainsResult {
 }
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url)
-  const forceRefresh = searchParams.get('refresh') === '1'
+  try {
+  const forceRefresh = req.url.includes('refresh=1')
 
   if (!forceRefresh) {
     const cached = await loadPainsCache()
@@ -119,7 +119,18 @@ Rules:
 
   const text = message.content[0].type === 'text' ? message.content[0].text.trim() : '{}'
   const cleaned = text.replace(/^```json?\n?/i, '').replace(/\n?```$/i, '').trim()
-  const parsed = JSON.parse(cleaned) as { gains: PainGainItem[]; pains: PainGainItem[] }
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
+  if (!jsonMatch) {
+    console.error('[PainsGains] No JSON object in Opus response. Preview:', cleaned.slice(0, 400))
+    throw new Error(`Opus returned no JSON. Preview: ${cleaned.slice(0, 200)}`)
+  }
+  let parsed: { gains: PainGainItem[]; pains: PainGainItem[] }
+  try {
+    parsed = JSON.parse(jsonMatch[0])
+  } catch (parseErr) {
+    console.error('[PainsGains] JSON.parse failed. Preview:', jsonMatch[0].slice(0, 400))
+    throw new Error(`JSON parse failed: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`)
+  }
 
   // Ensure postIndices are valid 0-based indices
   const clamp = (items: PainGainItem[]) =>
@@ -141,4 +152,9 @@ Rules:
   }
 
   return NextResponse.json(result)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[PainsGains] Error:', msg, err instanceof Error ? err.stack : '')
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
 }
