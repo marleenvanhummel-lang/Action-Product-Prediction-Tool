@@ -316,7 +316,7 @@ async function scrapePageWithFirecrawl(pageUrl: string): Promise<RawProduct[]> {
       for (let extractAttempt = 0; extractAttempt < 2; extractAttempt++) {
         try {
           extraction = await anthropic.messages.create({
-            model: 'claude-haiku-4-5-20251001',
+            model: 'claude-opus-4-7',
             max_tokens: 4000,
             messages: [{
               role: 'user',
@@ -530,7 +530,7 @@ Rules:
     let text: string
     try {
       const message = await anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-opus-4-7',
         max_tokens: 16000,
         messages: [{ role: 'user', content: prompt }],
       })
