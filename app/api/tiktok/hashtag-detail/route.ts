@@ -229,7 +229,7 @@ async function enrichVideos(videos: any[]): Promise<any[]> {
           const info: any = await youtubeDl(url, {
             dumpSingleJson: true,
             noWarnings: true,
-            noCallHome: true,
+            callHome: false,
             preferFreeFormats: true,
             skipDownload: true,
           })
