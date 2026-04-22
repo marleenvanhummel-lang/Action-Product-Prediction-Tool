@@ -869,17 +869,17 @@ function ProductDetailDrawer({ prediction, onClose }: { prediction: ProductPredi
       .then((data) => {
         const trends: PinterestTrendRow[] = data.trends ?? []
         if (trends.length === 0 || cancelled) return
-        return apiFetch('/api/trends/pinterest-match', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ product: prediction, trends }),
-        })
-          .then((r) => r.json())
-          .then((res) => { if (!cancelled) setPinterestMatches(res.matches ?? []) })
+        const productCat = prediction.category.toLowerCase()
+        const matches = trends.filter((t) =>
+          t.category.toLowerCase() === productCat ||
+          t.category.toLowerCase().includes(productCat) ||
+          productCat.includes(t.category.toLowerCase())
+        )
+        if (!cancelled) setPinterestMatches(matches.slice(0, 6))
       })
       .catch(() => { /* non-critical */ })
     return () => { cancelled = true }
-  }, [prediction.searchTerm, prediction.productName, prediction.category])
+  }, [prediction.category])
 
   const platform = PLATFORM_STYLES[prediction.platformBuzz] ?? PLATFORM_STYLES.mixed
   const searchUrl = `https://www.action.com/nl-nl/search/?q=${encodeURIComponent(prediction.searchTerm)}`
