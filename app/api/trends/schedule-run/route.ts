@@ -10,23 +10,36 @@ export const maxDuration = 300
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
 const firecrawl = new FirecrawlApp({ apiKey: process.env.FIRECRAWL_API_KEY ?? '' })
 
-// Authorization check: must provide the API_SECRET in header
+// Authorization check: accepts either API_SECRET (manual) or CRON_SECRET (Vercel Cron)
 async function authorize(req: Request): Promise<boolean> {
   const authHeader = req.headers.get('authorization')
-  const expectedSecret = process.env.API_SECRET
-  
-  if (!expectedSecret) {
-    console.error('[ScheduleRun] API_SECRET not configured')
-    return false
-  }
-  
+  const apiSecret = process.env.API_SECRET
+  const cronSecret = process.env.CRON_SECRET
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     console.warn('[ScheduleRun] Missing or invalid authorization header')
     return false
   }
-  
-  const token = authHeader.substring(7) // Remove "Bearer " prefix
-  return token === expectedSecret
+
+  const token = authHeader.substring(7)
+  if (apiSecret && token === apiSecret) return true
+  if (cronSecret && token === cronSecret) return true
+  return false
+}
+
+async function runDailyPrediction(): Promise<{ predictionsCount: number }> {
+  console.log('[ScheduleRun] Daily scheduled analysis triggered at', new Date().toISOString())
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+  const predictUrl = `${baseUrl}/api/trends/predict?refresh=1`
+
+  const response = await fetch(predictUrl, {
+    method: 'GET',
+    headers: { 'Authorization': `Bearer ${process.env.API_SECRET}` },
+  })
+  if (!response.ok) throw new Error(`Predict endpoint returned ${response.status}`)
+  const result = await response.json()
+  console.log('[ScheduleRun] Analysis complete:', result.predictions?.length, 'predictions cached')
+  return { predictionsCount: result.predictions?.length || 0 }
 }
 
 /**
@@ -42,93 +55,46 @@ async function authorize(req: Request): Promise<boolean> {
  *   -H "Authorization: Bearer $API_SECRET"
  */
 export async function POST(req: Request) {
-  // Authorization check
   if (!(await authorize(req))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-
   try {
-    console.log('[ScheduleRun] Daily scheduled analysis triggered at', new Date().toISOString())
-
-    // Call the main predict endpoint with refresh=1 to force fresh analysis
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
-    const predictUrl = `${baseUrl}/api/trends/predict?refresh=1`
-
-    const response = await fetch(predictUrl, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${process.env.API_SECRET}`,
-      },
-    })
-
-    if (!response.ok) {
-      throw new Error(`Predict endpoint returned ${response.status}`)
-    }
-
-    const result = await response.json()
-
-    console.log(
-      '[ScheduleRun] Analysis complete:',
-      result.predictions?.length,
-      'predictions cached'
-    )
-
+    const { predictionsCount } = await runDailyPrediction()
     return NextResponse.json({
       success: true,
       message: 'Daily analysis completed',
       timestamp: new Date().toISOString(),
-      predictionsCount: result.predictions?.length || 0,
+      predictionsCount,
     })
   } catch (error) {
     console.error('[ScheduleRun] Failed:', error instanceof Error ? error.message : error)
     return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        timestamp: new Date().toISOString(),
-      },
+      { success: false, error: error instanceof Error ? error.message : 'Unknown error', timestamp: new Date().toISOString() },
       { status: 500 }
     )
   }
 }
 
 /**
- * GET endpoint for manual testing or monitoring
- * 
- * Returns the last scheduled run status (reads from cache)
+ * GET endpoint — triggered by Vercel Cron daily (per vercel.json)
+ * Authorizes via CRON_SECRET (Vercel auto-includes it) or API_SECRET.
  */
 export async function GET(req: Request) {
   if (!(await authorize(req))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-
   try {
-    // Load cache to show when last analysis ran
-    const { data, error } = await supabaseAdmin
-      .from('predictions_cache')
-      .select('cached_at')
-      .eq('id', 'main')
-      .single()
-
-    if (error || !data) {
-      return NextResponse.json({
-        status: 'no_cache',
-        message: 'No scheduled analysis has run yet',
-      })
-    }
-
+    const { predictionsCount } = await runDailyPrediction()
     return NextResponse.json({
-      status: 'ok',
-      lastAnalysis: data.cached_at,
+      success: true,
+      message: 'Daily analysis completed',
       timestamp: new Date().toISOString(),
+      predictionsCount,
     })
   } catch (error) {
-    console.error('[ScheduleRun GET] Failed:', error)
+    console.error('[ScheduleRun GET] Failed:', error instanceof Error ? error.message : error)
     return NextResponse.json(
-      {
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Unknown error',
-      },
+      { success: false, error: error instanceof Error ? error.message : 'Unknown error', timestamp: new Date().toISOString() },
       { status: 500 }
     )
   }
