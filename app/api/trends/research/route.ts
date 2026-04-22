@@ -115,7 +115,7 @@ REGELS:
 - Return ONLY the JSON object, geen extra tekst of markdown blokken`
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-opus-4-7',
       max_tokens: 8000,
       messages: [{ role: 'user', content: prompt }],
     })
