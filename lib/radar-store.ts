@@ -5,7 +5,8 @@ const STORAGE_KEY = 'promo-radar-store'
 // Bumped when extraction logic changes; older stores are auto-reset on load.
 // v2: product numbers only read from "Article number" column.
 // v3: only scan "Product list" tab (excludes Promo prices etc).
-const STORE_VERSION = 3
+// v4: only include rows where "promo?" column = 1.
+const STORE_VERSION = 4
 
 export function emptyStore(): RadarStore {
   return { version: STORE_VERSION, products: {}, productNames: {}, uploads: [] }

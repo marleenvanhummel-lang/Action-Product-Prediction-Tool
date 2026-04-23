@@ -56,29 +56,34 @@ async function extractProductsAndNames(file: File): Promise<{ products: string[]
   const matchHeader = (cell: string, patterns: RegExp[]) => patterns.some((p) => p.test(cell))
   const articlePatterns = [/^article\s*(number|nr\.?|no\.?)$/i, /^artikelnummer$/i, /^artikel\s*nr\.?$/i]
   const namePatterns = [/^translations\s*nl$/i]
+  const promoPatterns = [/^promo\??$/i]
 
   for (const sheetName of sheetsToScan) {
     const sheet = workbook.Sheets[sheetName]
     const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' }) as (string | number | null)[][]
     if (rows.length === 0) continue
 
-    // Find header row: contains both an Article-number-like header and (ideally) Translations NL
+    // Find header row: contains Article-number-like header, Translations NL, and promo?
     let headerRowIdx = -1
     let articleColIdx = -1
     let nameColIdx = -1
+    let promoColIdx = -1
     for (let i = 0; i < Math.min(rows.length, 30); i++) {
       const row = rows[i] ?? []
       let aIdx = -1
       let nIdx = -1
+      let pIdx = -1
       for (let j = 0; j < row.length; j++) {
         const val = String(row[j] ?? '').trim()
         if (aIdx === -1 && matchHeader(val, articlePatterns)) aIdx = j
         if (nIdx === -1 && matchHeader(val, namePatterns)) nIdx = j
+        if (pIdx === -1 && matchHeader(val, promoPatterns)) pIdx = j
       }
       if (aIdx !== -1) {
         headerRowIdx = i
         articleColIdx = aIdx
         nameColIdx = nIdx
+        promoColIdx = pIdx
         break
       }
     }
@@ -86,6 +91,11 @@ async function extractProductsAndNames(file: File): Promise<{ products: string[]
 
     for (let r = headerRowIdx + 1; r < rows.length; r++) {
       const row = rows[r] ?? []
+      // Skip rows where promo? != 1 (only include actual promo products)
+      if (promoColIdx !== -1) {
+        const promoVal = String(row[promoColIdx] ?? '').trim()
+        if (promoVal !== '1') continue
+      }
       const raw = String(row[articleColIdx] ?? '').trim()
       if (!raw) continue
       const match = raw.match(PRODUCT_NUMBER_RE)
