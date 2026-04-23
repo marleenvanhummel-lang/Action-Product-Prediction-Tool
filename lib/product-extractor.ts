@@ -33,116 +33,88 @@ export function parseWeekFromFilename(filename: string): { week: number | null; 
   return { week, year }
 }
 
-/** Extract all unique 7-digit product numbers from an Excel file. */
-export async function extractProductNumbers(file: File): Promise<string[]> {
+/**
+ * Extract product numbers and names from an Excel file.
+ * Only reads from two columns (by header name):
+ *   - "Article number" → the 7-digit product code
+ *   - "Translations NL" → the product name
+ * Scans only sheets matching /artikellijst/i (falls back to all sheets if none).
+ */
+async function extractProductsAndNames(file: File): Promise<{ products: string[]; names: Record<string, string> }> {
   const XLSX = await import('xlsx')
   const arrayBuffer = await file.arrayBuffer()
   const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false })
 
   const found = new Set<string>()
-
-  // Only scan "Artikellijst" tabs; fall back to all sheets if none found
-  const artikellijstSheets = workbook.SheetNames.filter((n) => /artikellijst/i.test(n))
-  const sheetsToScan = artikellijstSheets.length > 0 ? artikellijstSheets : workbook.SheetNames
-
-  for (const sheetName of sheetsToScan) {
-    const sheet = workbook.Sheets[sheetName]
-    const cellAddresses = Object.keys(sheet).filter((key) => !key.startsWith('!'))
-
-    for (const addr of cellAddresses) {
-      const cell = sheet[addr]
-      if (!cell) continue
-
-      // Check the raw value (number) and formatted text (string)
-      const values: string[] = []
-      if (cell.v !== undefined && cell.v !== null) {
-        values.push(String(cell.v))
-      }
-      if (cell.w) {
-        values.push(cell.w)
-      }
-
-      for (const val of values) {
-        const matches = val.match(PRODUCT_NUMBER_RE)
-        if (matches) {
-          for (const m of matches) {
-            if (isLikelyProductNumber(m)) found.add(m)
-          }
-        }
-      }
-    }
-  }
-
-  return Array.from(found).sort()
-}
-
-/**
- * Extract product number → "Translations NL" mapping from an Excel file.
- * Uses header detection: finds the column named "Translations NL" and the
- * column containing 7-digit product numbers in each Artikellijst sheet.
- */
-export async function extractProductNames(file: File): Promise<Record<string, string>> {
-  const XLSX = await import('xlsx')
-  const arrayBuffer = await file.arrayBuffer()
-  const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false })
-
   const names: Record<string, string> = {}
+
   const artikellijstSheets = workbook.SheetNames.filter((n) => /artikellijst/i.test(n))
   const sheetsToScan = artikellijstSheets.length > 0 ? artikellijstSheets : workbook.SheetNames
 
+  const matchHeader = (cell: string, patterns: RegExp[]) => patterns.some((p) => p.test(cell))
+  const articlePatterns = [/^article\s*(number|nr\.?|no\.?)$/i, /^artikelnummer$/i, /^artikel\s*nr\.?$/i]
+  const namePatterns = [/^translations\s*nl$/i]
+
   for (const sheetName of sheetsToScan) {
     const sheet = workbook.Sheets[sheetName]
-    // sheet_to_json with header:1 gives us a 2D array of cell values so we can find headers ourselves
     const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' }) as (string | number | null)[][]
     if (rows.length === 0) continue
 
-    // Find the header row: the first row that contains "Translations NL"
+    // Find header row: contains both an Article-number-like header and (ideally) Translations NL
     let headerRowIdx = -1
+    let articleColIdx = -1
     let nameColIdx = -1
-    for (let i = 0; i < Math.min(rows.length, 20); i++) {
+    for (let i = 0; i < Math.min(rows.length, 30); i++) {
       const row = rows[i] ?? []
+      let aIdx = -1
+      let nIdx = -1
       for (let j = 0; j < row.length; j++) {
         const val = String(row[j] ?? '').trim()
-        if (/^translations\s*nl$/i.test(val)) {
-          headerRowIdx = i
-          nameColIdx = j
-          break
-        }
+        if (aIdx === -1 && matchHeader(val, articlePatterns)) aIdx = j
+        if (nIdx === -1 && matchHeader(val, namePatterns)) nIdx = j
       }
-      if (headerRowIdx !== -1) break
+      if (aIdx !== -1) {
+        headerRowIdx = i
+        articleColIdx = aIdx
+        nameColIdx = nIdx
+        break
+      }
     }
-    if (headerRowIdx === -1 || nameColIdx === -1) continue
+    if (headerRowIdx === -1 || articleColIdx === -1) continue
 
-    // Scan each data row — find the first cell with a valid 7-digit product number
     for (let r = headerRowIdx + 1; r < rows.length; r++) {
       const row = rows[r] ?? []
-      let productNumber: string | null = null
-      for (const cell of row) {
-        const s = String(cell ?? '')
-        const match = s.match(PRODUCT_NUMBER_RE)
-        if (match) {
-          const candidate = match.find(isLikelyProductNumber)
-          if (candidate) { productNumber = candidate; break }
-        }
-      }
+      const raw = String(row[articleColIdx] ?? '').trim()
+      if (!raw) continue
+      const match = raw.match(PRODUCT_NUMBER_RE)
+      if (!match) continue
+      const productNumber = match.find(isLikelyProductNumber)
       if (!productNumber) continue
-      const name = String(row[nameColIdx] ?? '').trim()
-      if (name && !names[productNumber]) names[productNumber] = name
+      found.add(productNumber)
+      if (nameColIdx !== -1) {
+        const name = String(row[nameColIdx] ?? '').trim()
+        if (name && !names[productNumber]) names[productNumber] = name
+      }
     }
   }
 
-  return names
+  return { products: Array.from(found).sort(), names }
+}
+
+/** Back-compat export — returns only product numbers. */
+export async function extractProductNumbers(file: File): Promise<string[]> {
+  const { products } = await extractProductsAndNames(file)
+  return products
 }
 
 /** Parse an Excel file: extract product numbers and detect week from filename. */
 export async function parseWeekFile(file: File): Promise<ParsedWeekFile> {
-  const [products, productNames, { week, year }] = await Promise.all([
-    extractProductNumbers(file),
-    extractProductNames(file),
+  const [{ products, names }, { week, year }] = await Promise.all([
+    extractProductsAndNames(file),
     Promise.resolve(parseWeekFromFilename(file.name)),
   ])
 
-  return { products, productNames, week, year, filename: file.name }
+  return { products, productNames: names, week, year, filename: file.name }
 }
 
 /** Format a week+year pair as a sortable key, e.g. "2025-W08" */
