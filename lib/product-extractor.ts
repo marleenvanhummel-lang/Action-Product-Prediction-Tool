@@ -48,8 +48,10 @@ async function extractProductsAndNames(file: File): Promise<{ products: string[]
   const found = new Set<string>()
   const names: Record<string, string> = {}
 
-  const artikellijstSheets = workbook.SheetNames.filter((n) => /artikellijst/i.test(n))
-  const sheetsToScan = artikellijstSheets.length > 0 ? artikellijstSheets : workbook.SheetNames
+  // Only scan "Product list" tabs (case-insensitive, spaces optional).
+  // Explicitly excludes "Promo prices" and other tabs that may contain non-product numbers.
+  const productListSheets = workbook.SheetNames.filter((n) => /^\s*product\s*list\s*$/i.test(n))
+  const sheetsToScan = productListSheets
 
   const matchHeader = (cell: string, patterns: RegExp[]) => patterns.some((p) => p.test(cell))
   const articlePatterns = [/^article\s*(number|nr\.?|no\.?)$/i, /^artikelnummer$/i, /^artikel\s*nr\.?$/i]
