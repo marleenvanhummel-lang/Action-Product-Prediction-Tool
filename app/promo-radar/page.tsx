@@ -31,10 +31,10 @@ export default function PromoRadarPage() {
 
   const totalProducts = Object.keys(store.products).length
 
-  const handleConfirm = (uploads: Array<{ products: string[]; week: number; year: number; filename: string }>) => {
+  const handleConfirm = (uploads: Array<{ products: string[]; productNames: Record<string, string>; week: number; year: number; filename: string }>) => {
     let current = store
     for (const u of uploads) {
-      current = addWeekToStore(current, u.products, u.week, u.year, u.filename)
+      current = addWeekToStore(current, u.products, u.week, u.year, u.filename, u.productNames)
     }
     setStore(current)
   }
@@ -105,7 +105,7 @@ export default function PromoRadarPage() {
         </div>
 
         {/* Product radar table */}
-        <RadarTable products={store.products} allWeeks={allWeeks} />
+        <RadarTable products={store.products} productNames={store.productNames ?? {}} allWeeks={allWeeks} />
       </div>
     </div>
   )

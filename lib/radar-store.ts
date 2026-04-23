@@ -4,7 +4,7 @@ import { weekKey } from './product-extractor'
 const STORAGE_KEY = 'promo-radar-store'
 
 export function emptyStore(): RadarStore {
-  return { products: {}, uploads: [] }
+  return { products: {}, productNames: {}, uploads: [] }
 }
 
 export function loadStore(): RadarStore {
@@ -32,6 +32,7 @@ export function addWeekToStore(
   week: number,
   year: number,
   filename: string,
+  productNames: Record<string, string> = {},
 ): RadarStore {
   const key = weekKey(week, year)
 
@@ -84,7 +85,13 @@ export function addWeekToStore(
         weekKey(b.week, b.year).localeCompare(weekKey(a.week, a.year)),
       )
 
-  const updated: RadarStore = { products: updatedProducts, uploads: updatedUploads }
+  // Merge product names — keep existing, add new ones from this upload
+  const mergedNames: Record<string, string> = { ...(store.productNames ?? {}) }
+  for (const [pn, name] of Object.entries(productNames)) {
+    if (name && name.trim()) mergedNames[pn] = name.trim()
+  }
+
+  const updated: RadarStore = { products: updatedProducts, productNames: mergedNames, uploads: updatedUploads }
   saveStore(updated)
   return updated
 }
@@ -105,7 +112,14 @@ export function deleteWeekFromStore(store: RadarStore, week: number, year: numbe
 
   const updatedUploads = store.uploads.filter((u) => !(u.week === week && u.year === year))
 
-  const updated: RadarStore = { products: updatedProducts, uploads: updatedUploads }
+  // Drop names for products that no longer appear in any week
+  const remainingNames: Record<string, string> = {}
+  const names = store.productNames ?? {}
+  for (const pn of Object.keys(updatedProducts)) {
+    if (names[pn]) remainingNames[pn] = names[pn]
+  }
+
+  const updated: RadarStore = { products: updatedProducts, productNames: remainingNames, uploads: updatedUploads }
   saveStore(updated)
   return updated
 }

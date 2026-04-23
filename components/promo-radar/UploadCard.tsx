@@ -8,13 +8,14 @@ interface UploadItem {
   id: string
   filename: string
   products: string[]
+  productNames: Record<string, string>
   detectedWeek: number | null
   week: string
   year: number
 }
 
 interface Props {
-  onConfirm: (uploads: Array<{ products: string[]; week: number; year: number; filename: string }>) => void
+  onConfirm: (uploads: Array<{ products: string[]; productNames: Record<string, string>; week: number; year: number; filename: string }>) => void
   existingWeekKeys: string[]
 }
 
@@ -48,6 +49,7 @@ export default function UploadCard({ onConfirm, existingWeekKeys }: Props) {
         id: `${Date.now()}-${i}`,
         filename: r.filename,
         products: r.products,
+        productNames: r.productNames,
         detectedWeek: r.week,
         week: r.week ? String(r.week) : '',
         year: r.year,
@@ -89,6 +91,7 @@ export default function UploadCard({ onConfirm, existingWeekKeys }: Props) {
     }
     const uploads = pending.map((item) => ({
       products: item.products,
+      productNames: item.productNames,
       week: parseInt(item.week, 10),
       year: item.year,
       filename: item.filename,
