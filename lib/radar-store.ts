@@ -2,9 +2,12 @@ import type { RadarStore, UploadRecord } from '@/types/promo'
 import { weekKey } from './product-extractor'
 
 const STORAGE_KEY = 'promo-radar-store'
+// Bumped when extraction logic changes; older stores are auto-reset on load.
+// v2: product numbers only read from "Article number" column.
+const STORE_VERSION = 2
 
 export function emptyStore(): RadarStore {
-  return { products: {}, productNames: {}, uploads: [] }
+  return { version: STORE_VERSION, products: {}, productNames: {}, uploads: [] }
 }
 
 export function loadStore(): RadarStore {
@@ -12,14 +15,22 @@ export function loadStore(): RadarStore {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return emptyStore()
-    return JSON.parse(raw) as RadarStore
+    const parsed = JSON.parse(raw) as RadarStore
+    // Auto-reset old stores that were built with the pre-Article-number extractor
+    if ((parsed.version ?? 1) < STORE_VERSION) {
+      const fresh = emptyStore()
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh))
+      return fresh
+    }
+    return parsed
   } catch {
     return emptyStore()
   }
 }
 
 function saveStore(store: RadarStore): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
+  const withVersion: RadarStore = { ...store, version: STORE_VERSION }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(withVersion))
 }
 
 /**

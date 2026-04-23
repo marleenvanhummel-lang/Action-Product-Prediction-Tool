@@ -1,5 +1,6 @@
 // Stored in localStorage under key 'promo-radar-store'
 export interface RadarStore {
+  version?: number // bumped when extraction logic changes; older versions are reset on load
   products: Record<string, string[]> // productNumber → ["2025-W08", "2025-W09", ...]
   productNames?: Record<string, string> // productNumber → Translations NL
   uploads: UploadRecord[]
