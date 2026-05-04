@@ -33,7 +33,10 @@ export function parseWeekFromFilename(filename: string): { week: number | null; 
   return { week, year }
 }
 
-/** Extract all unique 7-digit product numbers from an Excel file. */
+/** Extract all unique 7-digit product numbers from an Excel file.
+ *  If the sheet has an "Article number" column and a "Promo?" column,
+ *  only products where Promo? = 1 are included. Otherwise falls back
+ *  to scanning all cells for 7-digit numbers. */
 export async function extractProductNumbers(file: File): Promise<string[]> {
   const XLSX = await import('xlsx')
   const arrayBuffer = await file.arrayBuffer()
@@ -47,13 +50,39 @@ export async function extractProductNumbers(file: File): Promise<string[]> {
 
   for (const sheetName of sheetsToScan) {
     const sheet = workbook.Sheets[sheetName]
+
+    // Try structured extraction: look for "Article number" and "Promo?" columns
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
+    if (rows.length > 0) {
+      const headers = Object.keys(rows[0])
+      const articleCol = headers.find((h) => /article\s*number/i.test(h))
+      const promoCol = headers.find((h) => /promo\s*\??/i.test(h))
+
+      if (articleCol && promoCol) {
+        // Structured mode: only include products where Promo? = 1
+        for (const row of rows) {
+          const promoVal = String(row[promoCol]).trim()
+          if (promoVal !== '1') continue
+
+          const articleVal = String(row[articleCol]).trim()
+          const matches = articleVal.match(PRODUCT_NUMBER_RE)
+          if (matches) {
+            for (const m of matches) {
+              if (isLikelyProductNumber(m)) found.add(m)
+            }
+          }
+        }
+        continue // skip fallback for this sheet
+      }
+    }
+
+    // Fallback: scan all cells for 7-digit numbers
     const cellAddresses = Object.keys(sheet).filter((key) => !key.startsWith('!'))
 
     for (const addr of cellAddresses) {
       const cell = sheet[addr]
       if (!cell) continue
 
-      // Check the raw value (number) and formatted text (string)
       const values: string[] = []
       if (cell.v !== undefined && cell.v !== null) {
         values.push(String(cell.v))
