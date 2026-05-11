@@ -513,6 +513,15 @@ function MomentRow({ moment, filterCountry }: { moment: CultureMoment; filterCou
           </div>
           <p className="text-sm text-gray-700 mt-1">{moment.description}</p>
 
+          {moment.createdAt && (
+            <p
+              className="text-[10px] text-gray-400 mt-1"
+              title={new Date(moment.createdAt).toLocaleString('nl-NL')}
+            >
+              📅 Added {formatRelativeDate(moment.createdAt)}
+            </p>
+          )}
+
           {/* Countries */}
           {moment.countryDates.length > 0 && (() => {
             const today = new Date().toISOString().slice(0, 10)
@@ -669,6 +678,21 @@ function MomentRow({ moment, filterCountry }: { moment: CultureMoment; filterCou
 }
 
 // ── StatCard ──────────────────────────────────────────────────────────────
+
+function formatRelativeDate(iso: string): string {
+  const date = new Date(iso)
+  const diffMs = Date.now() - date.getTime()
+  const diffDays = Math.floor(diffMs / 86_400_000)
+  if (diffDays < 0) return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  if (diffDays === 0) {
+    const diffHours = Math.floor(diffMs / 3_600_000)
+    return diffHours < 1 ? 'just now' : `${diffHours}h ago`
+  }
+  if (diffDays === 1) return 'yesterday'
+  if (diffDays < 7) return `${diffDays}d ago`
+  if (diffDays < 28) return `${Math.floor(diffDays / 7)}w ago`
+  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+}
 
 function StatCard({ label, value, hint }: { label: string; value: number | string; hint?: string }) {
   return (

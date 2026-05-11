@@ -1011,13 +1011,26 @@ function TrendRow({ trend, view }: { trend: CultureTrend; view: View }) {
             </p>
           )}
 
-          {/* Source + estimated views */}
-          {(trend.sourceNames.length > 0 || trend.estimatedViews) && (
-            <p className="text-[11px] text-gray-400 mt-1.5">
-              {trend.sourceNames.slice(0, 2).join(', ')}
-              {trend.estimatedViews ? ` · ${trend.estimatedViews}` : ''}
-            </p>
-          )}
+          {/* Source + estimated views + when added */}
+          <p className="text-[11px] text-gray-400 mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+            {trend.sourceNames.length > 0 && (
+              <span>{trend.sourceNames.slice(0, 2).join(', ')}</span>
+            )}
+            {trend.estimatedViews && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span>{trend.estimatedViews}</span>
+              </>
+            )}
+            {trend.firstSeenAt && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span title={new Date(trend.firstSeenAt).toLocaleString('nl-NL')}>
+                  📅 {formatRelativeDate(trend.firstSeenAt)}
+                </span>
+              </>
+            )}
+          </p>
 
           {/* URL chips */}
           {trend.exampleUrls.length > 0 && (
@@ -1227,6 +1240,31 @@ function MindmapView({ mindmap }: { mindmap: MindmapData }) {
       })}
     </div>
   )
+}
+
+/**
+ * "Added X ago" formatter for the trend row.
+ * Returns "today", "yesterday", "3 days ago", "2 weeks ago", or "12 May".
+ */
+function formatRelativeDate(iso: string): string {
+  const date = new Date(iso)
+  const now = Date.now()
+  const diffMs = now - date.getTime()
+  const diffDays = Math.floor(diffMs / 86_400_000)
+
+  if (diffDays < 0) return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  if (diffDays === 0) {
+    const diffHours = Math.floor(diffMs / 3_600_000)
+    if (diffHours < 1) {
+      const diffMin = Math.floor(diffMs / 60_000)
+      return diffMin <= 1 ? 'just now' : `${diffMin}m ago`
+    }
+    return diffHours === 1 ? '1h ago' : `${diffHours}h ago`
+  }
+  if (diffDays === 1) return 'yesterday'
+  if (diffDays < 7) return `${diffDays}d ago`
+  if (diffDays < 28) return `${Math.floor(diffDays / 7)}w ago`
+  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
 
 function FeedbackButton({
