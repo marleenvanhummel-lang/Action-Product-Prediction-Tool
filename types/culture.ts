@@ -109,6 +109,61 @@ export interface CulturePrediction {
   expiresAt: string
 }
 
+// ── Moments Radar ─────────────────────────────────────────────────────────
+
+export type MomentTier = 'standard' | 'cultural'
+
+export type MomentCategory =
+  | 'holiday'         // Mother's Day, Christmas, Easter
+  | 'national'        // King's Day, Bastille Day
+  | 'sport'           // Champions League, F1
+  | 'festival'        // Tomorrowland, Lowlands
+  | 'religious'       // Carnival, Ramadan
+  | 'seasonal'        // back-to-school, summer
+  | 'entertainment'   // show finales, film releases
+  | 'music'           // album drops, tours
+  | 'celebrity'       // royal moments, breakups
+  | 'product_launch'  // iPhone, gaming consoles
+  | 'award_show'      // Met Gala, Cannes, Eurovision
+  | 'political'       // elections
+  | 'pop_culture'     // catch-all for zeitgeist
+
+export type ActionCountry =
+  | 'NL' | 'FR' | 'DE' | 'BE' | 'ES' | 'IT' | 'PL'
+  | 'CZ' | 'SK' | 'HU' | 'AT' | 'CH' | 'RO' | 'PT'
+
+export interface CountryDate {
+  country: ActionCountry
+  date: string          // YYYY-MM-DD
+  localName?: string    // "Moederdag", "Fête des Mères"
+}
+
+export interface CultureMoment {
+  id: string
+  createdAt: string
+  updatedAt: string
+  name: string
+  slug: string
+  description: string
+  tier: MomentTier
+  culturalRelevance: number  // 0-10
+  category: MomentCategory
+  scope: 'global' | 'country-specific'
+  countryDates: CountryDate[]
+  nextOccurrence: string | null
+  recurring: 'yearly' | 'yearly-variable' | 'one-time' | null
+  typicalDurationDays: number
+  hashtags: string[]
+  exampleUrls: string[]
+  thumbnailUrl: string | null
+  brandBrief: ActionBrief | null
+  sourceNames: string[]
+  reasoning: string | null
+  status: 'upcoming' | 'happening' | 'archived'
+}
+
+// ── Moderation ────────────────────────────────────────────────────────────
+
 export type ModerationAction = 'approve' | 'reject' | 'flag' | 'use'
 
 export interface CultureModeration {

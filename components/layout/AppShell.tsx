@@ -7,10 +7,12 @@ import AuthGuard from '@/components/auth/AuthGuard'
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const isLoginPage = pathname === '/login'
-  // Culture Radar is admin-only, protected at the API layer by API_SECRET.
-  // It does not need a Supabase session, so bypass AuthGuard entirely —
-  // this also keeps it working when Supabase env vars are not configured.
-  const isOpenAdminRoute = pathname.startsWith('/culture-radar')
+  // Culture Radar and Moments Radar are admin-only, protected at the API
+  // layer by API_SECRET. They do not need a Supabase session, so bypass
+  // AuthGuard entirely — this also keeps them working when Supabase env
+  // vars are not configured.
+  const isOpenAdminRoute =
+    pathname.startsWith('/culture-radar') || pathname.startsWith('/moments-radar')
 
   if (isLoginPage) {
     return <>{children}</>
