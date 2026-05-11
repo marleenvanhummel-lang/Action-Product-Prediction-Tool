@@ -90,6 +90,7 @@ interface TrendRowDB {
   feedback_useful: number | null
   feedback_generic: number | null
   thumbnail_meta: { authorName?: string; authorUrl?: string; title?: string; source?: string } | null
+  bundle_key: string | null
   mindmap: CultureTrend['mindmap']
 }
 
@@ -466,7 +467,7 @@ export async function listTrends(args: ListTrendsArgs): Promise<TrendRowDB[]> {
             popularity_score, freshness_score, validation_score, reasoning,
             source_ids, source_names, daily_rank, weekly_rank, rank_date,
             rank_week, estimated_views, status, brand_brief, country_relevance,
-            feedback_useful, feedback_generic, thumbnail_meta, mindmap
+            feedback_useful, feedback_generic, thumbnail_meta, mindmap, bundle_key
        FROM culture_trends
       WHERE ${conditions.join(' AND ')}
       ORDER BY ${orderBy}
@@ -534,6 +535,7 @@ export function rowToTrend(row: TrendRowDB): CultureTrend {
     feedbackUseful: row.feedback_useful ?? 0,
     feedbackGeneric: row.feedback_generic ?? 0,
     thumbnailMeta: row.thumbnail_meta ?? null,
+    bundleKey: row.bundle_key ?? null,
     mindmap: row.mindmap ?? null,
   }
 }

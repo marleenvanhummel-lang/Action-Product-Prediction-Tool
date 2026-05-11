@@ -21,6 +21,7 @@ import { POST as fetchHandler } from '@/app/api/culture/fetch/route'
 import { POST as backfillBriefsHandler } from '@/app/api/culture/backfill-briefs/route'
 import { POST as verifyUrlsHandler } from '@/app/api/culture/verify-urls/route'
 import { POST as scanCreatorsHandler } from '@/app/api/culture/scan-creators/route'
+import { POST as recomputeBundlesHandler } from '@/app/api/culture/recompute-bundles/route'
 import { POST as momentsFetchHandler } from '@/app/api/moments/fetch/route'
 import { POST as momentsBriefsHandler } from '@/app/api/moments/backfill-briefs/route'
 import { POST as momentsEnrichHandler } from '@/app/api/moments/enrich-topics/route'
@@ -171,6 +172,20 @@ export async function GET(req: NextRequest) {
       const r = await scanCreatorsHandler(creatorReq)
       const d = (await r.json()) as { inserted?: number }
       creatorsScanned = d.inserted ?? 0
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  // ── Step 2c: Recompute bundle keys ────────────────────────────────────
+  if (!fetchError) {
+    try {
+      const bundleReq = new NextRequest(new URL('http://internal/api/culture/recompute-bundles'), {
+        method: 'POST',
+        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      await recomputeBundlesHandler(bundleReq)
     } catch {
       /* best-effort */
     }

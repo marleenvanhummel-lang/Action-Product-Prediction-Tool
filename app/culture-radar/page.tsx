@@ -513,17 +513,20 @@ export default function CultureRadarPage() {
             </p>
           </div>
         ) : (() => {
-          // Render with hierarchy for Daily view: hero (#1), featured (#2-3), compact (#4+)
-          // Other views render compact for everything.
+          // ── Bundle trends with shared bundle_key into one primary card ────
+          // Pick the highest-popularity (or best-ranked) trend per bundle as
+          // the primary. Other members become "variants" displayed inside.
+          const bundledTrends = bundleTrends(trends)
+
           const showHierarchy = view === 'daily'
           if (!showHierarchy) {
             return (
-              <div>{trends.map((t) => <CompactTrend key={t.id} trend={t} />)}</div>
+              <div>{bundledTrends.map((t) => <CompactTrend key={t.id} trend={t} />)}</div>
             )
           }
-          const hero = trends.find((t) => t.dailyRank === 1)
-          const featured = trends.filter((t) => t.dailyRank === 2 || t.dailyRank === 3)
-          const rest = trends.filter((t) => (t.dailyRank ?? 999) > 3)
+          const hero = bundledTrends.find((t) => t.dailyRank === 1)
+          const featured = bundledTrends.filter((t) => t.dailyRank === 2 || t.dailyRank === 3)
+          const rest = bundledTrends.filter((t) => (t.dailyRank ?? 999) > 3)
           return (
             <>
               {hero && <HeroTrend trend={hero} />}
@@ -1240,6 +1243,52 @@ function MindmapView({ mindmap }: { mindmap: MindmapData }) {
  * "Added X ago" formatter for the trend row.
  * Returns "today", "yesterday", "3 days ago", "2 weeks ago", or "12 May".
  */
+/**
+ * Group trends that share the same bundle_key. The highest-ranked /
+ * highest-popularity trend in each bundle becomes the "primary" — the
+ * other members are attached as `bundleVariants` so the row UI can show
+ * them as extra hashtag chips on the same card.
+ */
+function bundleTrends(trends: CultureTrend[]): CultureTrend[] {
+  const grouped = new Map<string, CultureTrend[]>()
+  const orphans: CultureTrend[] = []
+  for (const t of trends) {
+    if (!t.bundleKey) {
+      orphans.push(t)
+      continue
+    }
+    const list = grouped.get(t.bundleKey) ?? []
+    list.push(t)
+    grouped.set(t.bundleKey, list)
+  }
+
+  const primaries: CultureTrend[] = []
+  for (const [, members] of grouped) {
+    // Sort: lowest daily_rank first (rank 1 wins), then highest popularity
+    members.sort((a, b) => {
+      const ra = a.dailyRank ?? 999
+      const rb = b.dailyRank ?? 999
+      if (ra !== rb) return ra - rb
+      return b.popularityScore - a.popularityScore
+    })
+    const [primary, ...rest] = members
+    if (rest.length > 0) {
+      // Attach variants for UI rendering
+      const withVariants: CultureTrend & { bundleVariants?: CultureTrend[] } = {
+        ...primary,
+        bundleVariants: rest,
+      }
+      primaries.push(withVariants)
+    } else {
+      primaries.push(primary)
+    }
+  }
+  // Combine, then sort by original ordering (daily_rank ascending, then by index)
+  const all = [...primaries, ...orphans]
+  all.sort((a, b) => (a.dailyRank ?? 999) - (b.dailyRank ?? 999))
+  return all
+}
+
 function formatRelativeDate(iso: string): string {
   const date = new Date(iso)
   const now = Date.now()

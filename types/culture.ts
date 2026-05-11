@@ -89,6 +89,7 @@ export interface CultureTrend {
   feedbackUseful: number
   feedbackGeneric: number
   thumbnailMeta: { authorName?: string; authorUrl?: string; title?: string; source?: string } | null
+  bundleKey: string | null
   mindmap: {
     origin: Array<{ label: string; detail?: string; url?: string }>
     spreading: Array<{ label: string; detail?: string; url?: string }>

@@ -5,6 +5,36 @@ import { apiFetch } from '@/lib/api-client'
 import type { CultureTrend } from '@/types/culture'
 import { TrendVisual, paletteFor } from './trend-visual'
 
+// Extended trend type with optional bundle variants
+type TrendWithVariants = CultureTrend & { bundleVariants?: CultureTrend[] }
+
+function VariantsChips({ variants }: { variants?: CultureTrend[] }) {
+  if (!variants || variants.length === 0) return null
+  return (
+    <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+      <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#6b6b6b', textTransform: 'uppercase' }}>
+        + {variants.length} VARIANTS:
+      </span>
+      {variants.slice(0, 6).map((v) => (
+        <span
+          key={v.id}
+          style={{
+            fontSize: 11,
+            padding: '2px 8px',
+            background: '#FAF6E6',
+            border: '1px solid #00000020',
+            color: '#1a1a1a',
+            fontWeight: 500,
+          }}
+          title={v.estimatedViews ? `${v.name} · ${v.estimatedViews}` : v.name}
+        >
+          {v.name}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function formatRelative(iso: string | null | undefined): string {
@@ -105,7 +135,7 @@ function FeedbackRow({ trend, state, send }: { trend: CultureTrend; state: strin
 
 // ── HERO trend (#1) — full-bleed visual, massive headline, brief inline ────
 
-export function HeroTrend({ trend }: { trend: CultureTrend }) {
+export function HeroTrend({ trend }: { trend: TrendWithVariants }) {
   const { state, send } = useFeedback(trend.id)
   const pal = paletteFor(trend.category)
   const brief = trend.brandBrief
@@ -160,6 +190,7 @@ export function HeroTrend({ trend }: { trend: CultureTrend }) {
           {trend.hashtags.length > 0 && (
             <p style={{ margin: '12px 0 0 0', fontSize: 12, color: '#6b6b6b' }}>{trend.hashtags.slice(0, 8).join(' ')}</p>
           )}
+          <VariantsChips variants={trend.bundleVariants} />
           <p style={{ margin: '16px 0 0 0', fontSize: 11, color: '#9ca3af' }}>
             {trend.sourceNames.slice(0, 2).join(' · ')}
             {trend.estimatedViews ? ` · ${trend.estimatedViews}` : ''}
@@ -226,7 +257,7 @@ export function HeroTrend({ trend }: { trend: CultureTrend }) {
 
 // ── Featured trend (#2-3) — medium card 2-up ───────────────────────────────
 
-export function FeaturedTrend({ trend }: { trend: CultureTrend }) {
+export function FeaturedTrend({ trend }: { trend: TrendWithVariants }) {
   const { state, send } = useFeedback(trend.id)
   const brief = trend.brandBrief
 
@@ -248,6 +279,7 @@ export function FeaturedTrend({ trend }: { trend: CultureTrend }) {
         <p style={{ margin: 0, fontSize: 13, lineHeight: 1.4, color: '#1a1a1a' }}>
           {trend.description.slice(0, 180)}{trend.description.length > 180 ? '…' : ''}
         </p>
+        <VariantsChips variants={trend.bundleVariants} />
         {brief && (
           <div style={{ marginTop: 12, padding: 10, background: '#FAF6E6', borderLeft: '3px solid #FF1300' }}>
             <p style={{ margin: 0, fontSize: 11, lineHeight: 1.4 }}>
@@ -280,7 +312,7 @@ export function FeaturedTrend({ trend }: { trend: CultureTrend }) {
 
 // ── Compact row (#4+) — slim horizontal row ────────────────────────────────
 
-export function CompactTrend({ trend }: { trend: CultureTrend }) {
+export function CompactTrend({ trend }: { trend: TrendWithVariants }) {
   const { state, send } = useFeedback(trend.id)
   const brief = trend.brandBrief
 
@@ -310,6 +342,12 @@ export function CompactTrend({ trend }: { trend: CultureTrend }) {
         <p style={{ margin: 0, fontSize: 12, color: '#4a4a4a', lineHeight: 1.4 }}>
           {trend.description.slice(0, 160)}{trend.description.length > 160 ? '…' : ''}
         </p>
+        {trend.bundleVariants && trend.bundleVariants.length > 0 && (
+          <p style={{ margin: '4px 0 0 0', fontSize: 10, color: '#6b6b6b' }}>
+            <strong style={{ fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#FF1300' }}>+ {trend.bundleVariants.length} VARIANTS: </strong>
+            {trend.bundleVariants.slice(0, 5).map(v => v.name).join(' · ')}
+          </p>
+        )}
         {brief?.contentAngle && (
           <p style={{ margin: '4px 0 0 0', fontSize: 11, color: '#1a1a1a' }}>
             <strong style={{ color: '#FF1300', fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em' }}>ANGLE: </strong>
