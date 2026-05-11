@@ -117,12 +117,16 @@ export interface MergedTrend {
 }
 
 /**
- * Merge a list of AI-identified trends (each tagged with the source they
- * came from) into a deduplicated list. Duplicates picked up across sources
- * get their hashtags / example URLs unioned and their source list extended.
+ * Merge a list of AI-identified trends into a deduplicated list. Two levels
+ * of merging:
  *
- * The "primary" record (description, reasoning, popularity) is taken from
- * the highest-popularity entry — the strongest signal wins.
+ *   1. Exact slug match — same trend from different sources gets unioned.
+ *   2. Near-duplicate match (Jaccard similarity >= 0.7 on slug bigrams
+ *      AND same category) — different wordings of the same trend get
+ *      merged into the highest-popularity one.
+ *
+ * This prevents "Dawn Powerwash Spray" and "Dawn Powerwash Spray Hacks"
+ * from both ending up in the Top 10.
  */
 export function mergeTrends(
   identified: Array<AIIdentifiedTrend & { sourceId: number; sourceName: string }>,
@@ -132,41 +136,96 @@ export function mergeTrends(
   for (const t of identified) {
     const slug = slugify(t.name)
     if (!slug) continue
-    const existing = bySlug.get(slug)
 
-    if (!existing) {
-      bySlug.set(slug, {
-        slug,
-        name: t.name,
-        description: t.description,
-        category: t.category,
-        contentType: t.contentType,
-        hashtags: [...new Set(t.hashtags ?? [])],
-        popularityScore: t.popularityScore,
-        reasoning: t.reasoning,
-        estimatedViews: t.estimatedViews ?? null,
-        exampleUrls: [...new Set(t.exampleUrls ?? [])],
-        sourceIds: [t.sourceId],
-        sourceNames: [t.sourceName],
-      })
+    // First check exact match
+    const existing = bySlug.get(slug)
+    if (existing) {
+      mergeInto(existing, t)
       continue
     }
 
-    existing.sourceIds = Array.from(new Set([...existing.sourceIds, t.sourceId]))
-    existing.sourceNames = Array.from(new Set([...existing.sourceNames, t.sourceName]))
-    existing.hashtags = Array.from(new Set([...existing.hashtags, ...(t.hashtags ?? [])]))
-    existing.exampleUrls = Array.from(
-      new Set([...existing.exampleUrls, ...(t.exampleUrls ?? [])]),
-    )
-    if (t.popularityScore > existing.popularityScore) {
-      existing.description = t.description
-      existing.popularityScore = t.popularityScore
-      existing.reasoning = t.reasoning
-      if (t.estimatedViews) existing.estimatedViews = t.estimatedViews
+    // Then check near-duplicate (same category + slug Jaccard >= 0.7)
+    const dup = findNearDuplicateSlug(slug, t.category, bySlug)
+    if (dup) {
+      mergeInto(dup, t)
+      continue
     }
+
+    // Otherwise insert as new
+    bySlug.set(slug, {
+      slug,
+      name: t.name,
+      description: t.description,
+      category: t.category,
+      contentType: t.contentType,
+      hashtags: [...new Set(t.hashtags ?? [])],
+      popularityScore: t.popularityScore,
+      reasoning: t.reasoning,
+      estimatedViews: t.estimatedViews ?? null,
+      exampleUrls: [...new Set(t.exampleUrls ?? [])],
+      sourceIds: [t.sourceId],
+      sourceNames: [t.sourceName],
+    })
   }
 
   return Array.from(bySlug.values())
+}
+
+function mergeInto(
+  existing: MergedTrend,
+  t: AIIdentifiedTrend & { sourceId: number; sourceName: string },
+): void {
+  existing.sourceIds = Array.from(new Set([...existing.sourceIds, t.sourceId]))
+  existing.sourceNames = Array.from(new Set([...existing.sourceNames, t.sourceName]))
+  existing.hashtags = Array.from(new Set([...existing.hashtags, ...(t.hashtags ?? [])]))
+  existing.exampleUrls = Array.from(
+    new Set([...existing.exampleUrls, ...(t.exampleUrls ?? [])]),
+  )
+  if (t.popularityScore > existing.popularityScore) {
+    existing.name = t.name
+    existing.description = t.description
+    existing.popularityScore = t.popularityScore
+    existing.reasoning = t.reasoning
+    if (t.estimatedViews) existing.estimatedViews = t.estimatedViews
+  }
+}
+
+/**
+ * Find a near-duplicate slug in the existing merge map. Two slugs are
+ * considered near-duplicates when:
+ *   - Same category (cross-category collisions stay separate)
+ *   - Jaccard similarity on character bigrams >= 0.7
+ *
+ * Example: "dawn-powerwash-spray" vs "dawn-powerwash-spray-hacks" → 0.85+
+ */
+function findNearDuplicateSlug(
+  slug: string,
+  category: CultureCategory,
+  existing: Map<string, MergedTrend>,
+): MergedTrend | null {
+  const slugBigrams = bigrams(slug)
+  if (slugBigrams.size < 3) return null  // too short to be reliable
+
+  for (const [otherSlug, t] of existing) {
+    if (t.category !== category) continue
+    if (Math.abs(otherSlug.length - slug.length) > 25) continue  // length sanity check
+    const sim = jaccardSimilarity(slugBigrams, bigrams(otherSlug))
+    if (sim >= 0.7) return t
+  }
+  return null
+}
+
+function bigrams(s: string): Set<string> {
+  const out = new Set<string>()
+  for (let i = 0; i < s.length - 1; i++) out.add(s.slice(i, i + 2))
+  return out
+}
+
+function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 1
+  let intersect = 0
+  for (const x of a) if (b.has(x)) intersect++
+  return intersect / (a.size + b.size - intersect)
 }
 
 // ───────────────────────────────────────────────────────────────────────────

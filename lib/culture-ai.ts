@@ -176,6 +176,14 @@ function normalizeTrend(
     return null
   }
 
+  // Require at least one specificity anchor: hashtag, @handle, quoted
+  // string, recognised number ("3M views", "#1 trending"), or a Title-Case
+  // proper noun. Without an anchor it's just a concept, not a trend.
+  const reasoning = typeof raw.reasoning === 'string' ? raw.reasoning : ''
+  if (!hasAnchor(name, description, reasoning, raw)) {
+    return null
+  }
+
   const category = isCategory(raw.category) ? raw.category : fallbackCategory
   const contentType = isContentType(raw.contentType) ? raw.contentType : 'format'
 
@@ -317,6 +325,55 @@ const GENERIC_NOUN_NAMES = new Set([
   'dances',
   'hashtags',
 ])
+
+// ── Specificity anchor requirement ──────────────────────────────────────────
+//
+// Every accepted trend must contain at least one of:
+//   - a hashtag (in the hashtags array, OR in the name/description)
+//   - a creator handle (@xyz)
+//   - a quoted string ("Glazed donut nails")
+//   - a quantified claim (3M views, #1 trending NL)
+//   - a Title-Case multi-word proper noun (named song, brand, person)
+//
+// Without an anchor the "trend" is just a category description — useless
+// for Action's content team because they can't point at a real signal.
+function hasAnchor(
+  name: string,
+  description: string,
+  reasoning: string,
+  raw: Record<string, unknown>,
+): boolean {
+  const allText = `${name} ${description} ${reasoning}`
+  const hashtagsArr = Array.isArray(raw.hashtags) ? raw.hashtags : []
+
+  // Hashtag in array or inline (#word)
+  if (hashtagsArr.length > 0) return true
+  if (/#\w{3,}/.test(allText)) return true
+
+  // Creator handle
+  if (/@\w{3,}/.test(allText)) return true
+
+  // Quoted named entity (e.g. "What Was That", 'brat summer')
+  if (/["“']([^"”']{3,40})["”']/.test(allText)) return true
+
+  // Quantified signal — views/posts/likes/streams/rank
+  if (/\b\d+[\d.,]*\s?[KMB]\s?(views?|posts?|likes?|streams?|plays?|followers?)/i.test(allText)) {
+    return true
+  }
+  if (/#\d+\s+trending/i.test(allText)) return true
+  if (/\b\d+[\d.,]*\s?(million|thousand|billion)\b/i.test(allText)) return true
+
+  // Title-Case multi-word proper noun: "Carolyn Bessette-Kennedy",
+  // "Charli XCX", "Dawn Powerwash", "Trader Joe's"
+  if (/\b[A-Z][a-z]+(?:[-'][A-Z][a-z]+)?\s+[A-Z][a-z]+/.test(`${name} ${description}`)) {
+    return true
+  }
+  // Single capitalised acronym OR Title-Case all-caps word like "GLP-1"
+  // only counts when paired with another distinctive token — so the
+  // bare "GLP-1 Supplements" won't pass, but "GLP-1 Ozempic alternative" will.
+
+  return false
+}
 
 function isGenericTrendName(name: string): boolean {
   const norm = name.toLowerCase().trim()
