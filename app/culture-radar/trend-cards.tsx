@@ -137,6 +137,7 @@ function FeedbackRow({ trend, state, send }: { trend: CultureTrend; state: strin
 
 export function HeroTrend({ trend }: { trend: TrendWithVariants }) {
   const { state, send } = useFeedback(trend.id)
+  const [expanded, setExpanded] = useState(true)
   const pal = paletteFor(trend.category)
   const brief = trend.brandBrief
 
@@ -178,8 +179,37 @@ export function HeroTrend({ trend }: { trend: TrendWithVariants }) {
             #1 TODAY
           </div>
         )}
+        {/* Collapse toggle */}
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          title={expanded ? 'Collapse' : 'Expand'}
+          style={{
+            position: 'absolute', top: 16, right: trend.thumbnailUrl ? 16 : 130,
+            background: '#FFFDF3', color: '#000', border: '1px solid #00000020',
+            width: 32, height: 32, cursor: 'pointer',
+            fontFamily: 'var(--font-jai-display)', fontSize: 14, lineHeight: 1,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          aria-label={expanded ? 'Collapse' : 'Expand'}
+        >
+          {expanded ? '−' : '+'}
+        </button>
       </div>
 
+      {!expanded && (
+        <div style={{ padding: '16px 28px 20px' }}>
+          <p style={{ margin: 0, fontSize: 13, color: '#1a1a1a', lineHeight: 1.4 }}>
+            {trend.description.slice(0, 200)}{trend.description.length > 200 ? '…' : ''}
+          </p>
+          <p style={{ margin: '8px 0 0 0', fontSize: 11, color: '#9ca3af' }}>
+            {trend.sourceNames.slice(0, 2).join(' · ')}
+            {trend.firstSeenAt ? ` · added ${formatRelative(trend.firstSeenAt)}` : ''}
+          </p>
+        </div>
+      )}
+
+      {expanded && (
+      <>
       {/* Description + brief in 2 columns */}
       <div style={{ padding: 28, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32 }}>
         <div>
@@ -249,6 +279,8 @@ export function HeroTrend({ trend }: { trend: TrendWithVariants }) {
           })}
         </div>
       )}
+      </>
+      )}
 
       <FeedbackRow trend={trend} state={state} send={send} />
     </article>
@@ -259,6 +291,7 @@ export function HeroTrend({ trend }: { trend: TrendWithVariants }) {
 
 export function FeaturedTrend({ trend }: { trend: TrendWithVariants }) {
   const { state, send } = useFeedback(trend.id)
+  const [expanded, setExpanded] = useState(false)
   const brief = trend.brandBrief
 
   if (state === 'archived') return null
@@ -270,6 +303,20 @@ export function FeaturedTrend({ trend }: { trend: TrendWithVariants }) {
         <div style={{ position: 'absolute', top: 10, left: 10, background: '#000', color: '#FFFDF3', padding: '3px 10px', fontFamily: 'var(--font-jai-display)', fontSize: 10, letterSpacing: '0.15em' }}>
           #{trend.dailyRank}
         </div>
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          title={expanded ? 'Collapse' : 'Expand'}
+          style={{
+            position: 'absolute', top: 8, right: 8,
+            background: '#FFFDF3', color: '#000', border: '1px solid #00000020',
+            width: 28, height: 28, cursor: 'pointer',
+            fontFamily: 'var(--font-jai-display)', fontSize: 13, lineHeight: 1,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          aria-label={expanded ? 'Collapse' : 'Expand'}
+        >
+          {expanded ? '−' : '+'}
+        </button>
       </div>
       <div style={{ padding: 18 }}>
         <p className="jai-mono-label" style={{ color: '#FF1300', margin: 0 }}>{trend.category}</p>
@@ -277,7 +324,7 @@ export function FeaturedTrend({ trend }: { trend: TrendWithVariants }) {
           {trend.name}
         </h3>
         <p style={{ margin: 0, fontSize: 13, lineHeight: 1.4, color: '#1a1a1a' }}>
-          {trend.description.slice(0, 180)}{trend.description.length > 180 ? '…' : ''}
+          {expanded ? trend.description : `${trend.description.slice(0, 180)}${trend.description.length > 180 ? '…' : ''}`}
         </p>
         <VariantsChips variants={trend.bundleVariants} />
         {brief && (
@@ -285,13 +332,30 @@ export function FeaturedTrend({ trend }: { trend: TrendWithVariants }) {
             <p style={{ margin: 0, fontSize: 11, lineHeight: 1.4 }}>
               <strong style={{ fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.12em', color: '#FF1300' }}>FOR ACTION</strong>
               <br />
-              {brief.actionRelevance.slice(0, 140)}
+              {expanded ? brief.actionRelevance : `${brief.actionRelevance.slice(0, 140)}${brief.actionRelevance.length > 140 ? '…' : ''}`}
             </p>
+            {expanded && brief.contentAngle && (
+              <p style={{ margin: '8px 0 0 0', fontSize: 11, lineHeight: 1.4 }}>
+                <strong style={{ fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.12em', color: '#000' }}>ANGLE</strong>
+                <br />
+                {brief.contentAngle}
+              </p>
+            )}
+            {expanded && brief.suggestedSound && (
+              <p style={{ margin: '8px 0 0 0', fontSize: 11, lineHeight: 1.4 }}>
+                <strong style={{ fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.12em', color: '#000' }}>
+                  ♪ SOUND {brief.soundRisk === 'safe' ? '· ✓ SAFE' : brief.soundRisk === 'risky' ? '· ⚠ RISKY' : ''}
+                </strong>
+                <br />
+                {brief.suggestedSound}
+              </p>
+            )}
           </div>
         )}
+        {expanded && trend.mindmap && <MindmapCompact mindmap={trend.mindmap} />}
         {trend.exampleUrls.length > 0 && (
           <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {sortUrls(trend.exampleUrls).slice(0, 3).map((url, i) => {
+            {sortUrls(trend.exampleUrls).slice(0, expanded ? 8 : 3).map((url, i) => {
               const c = classifyUrl(url)
               return (
                 <a key={`${url}-${i}`} href={url} target="_blank" rel="noreferrer" style={{
@@ -314,6 +378,7 @@ export function FeaturedTrend({ trend }: { trend: TrendWithVariants }) {
 
 export function CompactTrend({ trend }: { trend: TrendWithVariants }) {
   const { state, send } = useFeedback(trend.id)
+  const [expanded, setExpanded] = useState(false)
   const brief = trend.brandBrief
 
   if (state === 'archived') return null
@@ -321,61 +386,170 @@ export function CompactTrend({ trend }: { trend: TrendWithVariants }) {
   return (
     <article
       className="jai-card jai-card-hover"
-      style={{ display: 'flex', gap: 0, marginBottom: 8, overflow: 'hidden' }}
+      style={{ marginBottom: 8, overflow: 'hidden' }}
     >
-      <div style={{ flexShrink: 0, width: 100 }}>
-        <TrendVisual trend={trend} size="compact" />
-      </div>
-      <div style={{ flex: 1, padding: '12px 16px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-          {trend.dailyRank && (
-            <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 14, color: '#FF1300', letterSpacing: '-0.02em' }}>
-              #{trend.dailyRank}
-            </span>
-          )}
-          <p className="jai-mono-label" style={{ color: '#6b6b6b', margin: 0, fontSize: 9 }}>{trend.category}</p>
-          {trend.feedbackUseful > 0 && <span style={{ fontSize: 10, color: '#047857' }}>👍 {trend.feedbackUseful}</span>}
+      <div style={{ display: 'flex', gap: 0 }}>
+        <div style={{ flexShrink: 0, width: 100 }}>
+          <TrendVisual trend={trend} size="compact" />
         </div>
-        <h4 style={{ margin: '4px 0 2px 0', fontFamily: 'var(--font-jai-display)', fontSize: 16, lineHeight: 1.1, color: '#000', textTransform: 'uppercase', letterSpacing: '-0.01em' }}>
-          {trend.name}
-        </h4>
-        <p style={{ margin: 0, fontSize: 12, color: '#4a4a4a', lineHeight: 1.4 }}>
-          {trend.description.slice(0, 160)}{trend.description.length > 160 ? '…' : ''}
-        </p>
-        {trend.bundleVariants && trend.bundleVariants.length > 0 && (
-          <p style={{ margin: '4px 0 0 0', fontSize: 10, color: '#6b6b6b' }}>
-            <strong style={{ fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#FF1300' }}>+ {trend.bundleVariants.length} VARIANTS: </strong>
-            {trend.bundleVariants.slice(0, 5).map(v => v.name).join(' · ')}
-          </p>
-        )}
-        {brief?.contentAngle && (
-          <p style={{ margin: '4px 0 0 0', fontSize: 11, color: '#1a1a1a' }}>
-            <strong style={{ color: '#FF1300', fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em' }}>ANGLE: </strong>
-            {brief.contentAngle.slice(0, 140)}
-          </p>
-        )}
-      </div>
-      <div style={{ flexShrink: 0, padding: '12px 16px', borderLeft: '1px solid #00000010', display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'center', minWidth: 110 }}>
-        {trend.exampleUrls.slice(0, 2).map((url, i) => {
-          const c = classifyUrl(url)
-          return (
-            <a key={`${url}-${i}`} href={url} target="_blank" rel="noreferrer" style={{
-              fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em',
-              padding: '3px 6px', background: c.bg, color: c.fg, textDecoration: 'none', textAlign: 'center',
-            }}>
-              {c.label}
-            </a>
-          )
-        })}
-        <button
-          onClick={() => send('useful')}
-          title="Mark useful"
-          style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 14, padding: 0, opacity: state === 'useful' ? 1 : 0.4 }}
+        <div
+          onClick={() => setExpanded((v) => !v)}
+          style={{ flex: 1, padding: '12px 16px', display: 'flex', flexDirection: 'column', justifyContent: 'center', cursor: 'pointer' }}
         >
-          👍
-        </button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+            {trend.dailyRank && (
+              <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 14, color: '#FF1300', letterSpacing: '-0.02em' }}>
+                #{trend.dailyRank}
+              </span>
+            )}
+            <p className="jai-mono-label" style={{ color: '#6b6b6b', margin: 0, fontSize: 9 }}>{trend.category}</p>
+            {trend.feedbackUseful > 0 && <span style={{ fontSize: 10, color: '#047857' }}>👍 {trend.feedbackUseful}</span>}
+          </div>
+          <h4 style={{ margin: '4px 0 2px 0', fontFamily: 'var(--font-jai-display)', fontSize: 16, lineHeight: 1.1, color: '#000', textTransform: 'uppercase', letterSpacing: '-0.01em' }}>
+            {trend.name}
+          </h4>
+          <p style={{ margin: 0, fontSize: 12, color: '#4a4a4a', lineHeight: 1.4 }}>
+            {expanded ? trend.description : `${trend.description.slice(0, 160)}${trend.description.length > 160 ? '…' : ''}`}
+          </p>
+          {trend.bundleVariants && trend.bundleVariants.length > 0 && (
+            <p style={{ margin: '4px 0 0 0', fontSize: 10, color: '#6b6b6b' }}>
+              <strong style={{ fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#FF1300' }}>+ {trend.bundleVariants.length} VARIANTS: </strong>
+              {trend.bundleVariants.slice(0, expanded ? 20 : 5).map(v => v.name).join(' · ')}
+            </p>
+          )}
+          {brief?.contentAngle && !expanded && (
+            <p style={{ margin: '4px 0 0 0', fontSize: 11, color: '#1a1a1a' }}>
+              <strong style={{ color: '#FF1300', fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em' }}>ANGLE: </strong>
+              {brief.contentAngle.slice(0, 140)}
+            </p>
+          )}
+        </div>
+        <div style={{ flexShrink: 0, padding: '12px 16px', borderLeft: '1px solid #00000010', display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'center', minWidth: 110 }}>
+          {trend.exampleUrls.slice(0, 2).map((url, i) => {
+            const c = classifyUrl(url)
+            return (
+              <a key={`${url}-${i}`} href={url} target="_blank" rel="noreferrer" style={{
+                fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em',
+                padding: '3px 6px', background: c.bg, color: c.fg, textDecoration: 'none', textAlign: 'center',
+              }}>
+                {c.label}
+              </a>
+            )
+          })}
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            title={expanded ? 'Collapse' : 'Expand'}
+            style={{
+              background: '#FFFDF3', color: '#000', border: '1px solid #00000020',
+              fontFamily: 'var(--font-jai-display)', fontSize: 11, padding: '3px 6px',
+              cursor: 'pointer', textAlign: 'center', letterSpacing: '0.1em',
+            }}
+            aria-label={expanded ? 'Collapse' : 'Expand'}
+          >
+            {expanded ? '− CLOSE' : '+ MORE'}
+          </button>
+        </div>
       </div>
+
+      {expanded && (
+        <div style={{ borderTop: '1px solid #00000010', padding: '14px 16px 16px', background: '#FFFDF3' }}>
+          {brief && (
+            <div style={{ marginBottom: 12 }}>
+              <p className="jai-mono-label" style={{ color: '#FF1300', margin: 0, fontSize: 10 }}>FOR ACTION</p>
+              <p style={{ margin: '4px 0 0 0', fontSize: 12, lineHeight: 1.45, color: '#1a1a1a' }}>{brief.actionRelevance}</p>
+
+              {brief.contentAngle && (
+                <>
+                  <p className="jai-mono-label" style={{ color: '#000', margin: '10px 0 0 0', fontSize: 10 }}>CONTENT ANGLE</p>
+                  <p style={{ margin: '4px 0 0 0', fontSize: 12, lineHeight: 1.45, color: '#1a1a1a' }}>{brief.contentAngle}</p>
+                </>
+              )}
+
+              {brief.suggestedSound && (
+                <>
+                  <p className="jai-mono-label" style={{ color: '#000', margin: '10px 0 0 0', fontSize: 10 }}>
+                    ♪ SOUND {brief.soundRisk === 'safe' ? '· ✓ SAFE' : brief.soundRisk === 'risky' ? '· ⚠ RISKY' : ''}
+                  </p>
+                  <p style={{ margin: '4px 0 0 0', fontSize: 12, lineHeight: 1.45, color: '#1a1a1a' }}>{brief.suggestedSound}</p>
+                </>
+              )}
+
+              {brief.productCategories && brief.productCategories.length > 0 && (
+                <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {brief.productCategories.map((c) => (
+                    <span key={c} style={{ background: '#000', color: '#FFFDF3', padding: '3px 8px', fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {trend.mindmap && <MindmapCompact mindmap={trend.mindmap} />}
+
+          {trend.exampleUrls.length > 2 && (
+            <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {sortUrls(trend.exampleUrls).slice(0, 8).map((url, i) => {
+                const c = classifyUrl(url)
+                return (
+                  <a key={`${url}-${i}`} href={url} target="_blank" rel="noreferrer" style={{
+                    fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em',
+                    padding: '4px 8px', background: c.bg, color: c.fg, textDecoration: 'none',
+                  }}>
+                    {c.label}
+                  </a>
+                )
+              })}
+            </div>
+          )}
+
+          <div style={{ marginTop: 10 }}>
+            <FeedbackRow trend={trend} state={state} send={send} />
+          </div>
+        </div>
+      )}
     </article>
+  )
+}
+
+// ── Mindmap compact (inline reveal for Featured/Compact) ──────────────────
+
+function MindmapCompact({ mindmap }: { mindmap: NonNullable<CultureTrend['mindmap']> }) {
+  const sections: Array<{ key: keyof typeof mindmap; label: string; emoji: string }> = [
+    { key: 'origin', label: 'Origin', emoji: '🌱' },
+    { key: 'spreading', label: 'Spreading', emoji: '📡' },
+    { key: 'adjacent', label: 'Adjacent', emoji: '🔗' },
+    { key: 'variations', label: 'Variations', emoji: '🌀' },
+    { key: 'searches', label: 'Searches', emoji: '🔍' },
+    { key: 'brandPlays', label: 'Brand plays', emoji: '💼' },
+  ]
+  const nonEmpty = sections.filter((s) => (mindmap[s.key] ?? []).length > 0)
+  if (nonEmpty.length === 0) return null
+
+  return (
+    <div style={{ marginTop: 12, padding: 10, background: '#FFF7E0', border: '1px solid #00000010' }}>
+      <p className="jai-mono-label" style={{ color: '#000', margin: 0, fontSize: 10 }}>
+        🧠 CONTEXT &amp; CONNECTIONS
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginTop: 8 }}>
+        {nonEmpty.map((s) => (
+          <div key={s.key} style={{ borderLeft: '2px solid #000', paddingLeft: 8 }}>
+            <p className="jai-mono-label" style={{ margin: 0, fontSize: 9, color: '#000' }}>
+              {s.emoji} {s.label}
+            </p>
+            <ul style={{ margin: '4px 0 0 0', padding: 0, listStyle: 'none' }}>
+              {(mindmap[s.key] ?? []).slice(0, 3).map((it, i) => (
+                <li key={i} style={{ fontSize: 11, lineHeight: 1.35, marginBottom: 2, color: '#1a1a1a' }}>
+                  <strong>{it.label}</strong>
+                  {it.detail && <span style={{ color: '#6b6b6b' }}> — {it.detail.slice(0, 90)}</span>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
