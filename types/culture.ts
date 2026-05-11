@@ -89,6 +89,14 @@ export interface CultureTrend {
   feedbackUseful: number
   feedbackGeneric: number
   thumbnailMeta: { authorName?: string; authorUrl?: string; title?: string; source?: string } | null
+  mindmap: {
+    origin: Array<{ label: string; detail?: string; url?: string }>
+    spreading: Array<{ label: string; detail?: string; url?: string }>
+    adjacent: Array<{ label: string; detail?: string; url?: string }>
+    variations: Array<{ label: string; detail?: string; url?: string }>
+    searches: Array<{ label: string; detail?: string; url?: string }>
+    brandPlays: Array<{ label: string; detail?: string; url?: string }>
+  } | null
 }
 
 export type PredictionType = 'emerging' | 'lifecycle' | 'seasonal'

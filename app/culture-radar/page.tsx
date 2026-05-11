@@ -223,7 +223,19 @@ export default function CultureRadarPage() {
           /* best-effort */
         }
 
-        setRefreshStage(`Done. ${totalBriefed} briefs + URLs verified.`)
+        // Generate context mindmaps for top trends
+        setRefreshStage('Building context mindmaps…')
+        try {
+          await apiFetch('/api/culture/enrich-mindmaps', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ limit: 10 }),
+          })
+        } catch {
+          /* best-effort */
+        }
+
+        setRefreshStage(`Done. ${totalBriefed} briefs + URLs + mindmaps ready.`)
         await loadTrends()
       }
     } catch (e) {
@@ -858,6 +870,7 @@ function TrendRow({ trend, view }: { trend: CultureTrend; view: View }) {
   const lc = brief?.lifecycleStage ? LIFECYCLE_VISUAL[brief.lifecycleStage] : null
 
   const [feedbackState, setFeedbackState] = useState<'idle' | 'useful' | 'generic' | 'archived'>('idle')
+  const [mindmapOpen, setMindmapOpen] = useState(false)
 
   const sendFeedback = async (action: 'useful' | 'generic' | 'archive') => {
     setFeedbackState(action === 'archive' ? 'archived' : action)
@@ -1097,6 +1110,28 @@ function TrendRow({ trend, view }: { trend: CultureTrend; view: View }) {
         </div>
       )}
 
+      {/* Mindmap (collapsible) */}
+      {trend.mindmap && (
+        <div
+          className="border-t"
+          style={{ borderColor: '#f0f0f0', backgroundColor: '#ffffff' }}
+        >
+          <button
+            onClick={() => setMindmapOpen((o) => !o)}
+            className="w-full flex items-center justify-between px-4 py-2 text-xs hover:bg-gray-50 transition-colors"
+            style={{ fontFamily: 'var(--font-body)' }}
+          >
+            <span className="font-semibold text-gray-700">
+              🧠 Context &amp; connections
+            </span>
+            <span className="text-gray-400">{mindmapOpen ? '▾' : '▸'}</span>
+          </button>
+          {mindmapOpen && (
+            <MindmapView mindmap={trend.mindmap} />
+          )}
+        </div>
+      )}
+
       {/* Feedback bar */}
       <div
         className="border-t flex items-center justify-between px-4 py-2"
@@ -1131,6 +1166,65 @@ function TrendRow({ trend, view }: { trend: CultureTrend; view: View }) {
           />
         </div>
       </div>
+    </div>
+  )
+}
+
+interface MindmapData {
+  origin: Array<{ label: string; detail?: string; url?: string }>
+  spreading: Array<{ label: string; detail?: string; url?: string }>
+  adjacent: Array<{ label: string; detail?: string; url?: string }>
+  variations: Array<{ label: string; detail?: string; url?: string }>
+  searches: Array<{ label: string; detail?: string; url?: string }>
+  brandPlays: Array<{ label: string; detail?: string; url?: string }>
+}
+
+function MindmapView({ mindmap }: { mindmap: MindmapData }) {
+  const sections: Array<{ key: keyof MindmapData; label: string; emoji: string; color: string }> = [
+    { key: 'origin',     label: 'Origin',          emoji: '🌱', color: '#065f46' },
+    { key: 'spreading',  label: 'Spreading via',   emoji: '📡', color: '#1e40af' },
+    { key: 'adjacent',   label: 'Adjacent',        emoji: '🔗', color: '#7c3aed' },
+    { key: 'variations', label: 'Variations',      emoji: '🌀', color: '#c2410c' },
+    { key: 'searches',   label: 'People search',   emoji: '🔍', color: '#0891b2' },
+    { key: 'brandPlays', label: 'Brand plays',     emoji: '💼', color: '#b91c1c' },
+  ]
+
+  return (
+    <div className="px-4 py-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" style={{ backgroundColor: '#fafafa' }}>
+      {sections.map((s) => {
+        const items = mindmap[s.key] ?? []
+        if (items.length === 0) return null
+        return (
+          <div key={s.key} className="rounded-lg bg-white p-3" style={{ borderLeft: `3px solid ${s.color}` }}>
+            <p
+              className="text-[10px] font-bold uppercase tracking-wider mb-1.5"
+              style={{ color: s.color, fontFamily: 'var(--font-display)' }}
+            >
+              {s.emoji} {s.label}
+            </p>
+            <ul className="space-y-1">
+              {items.slice(0, 5).map((it, i) => (
+                <li key={i} className="text-[11px] text-gray-700 leading-snug">
+                  <span className="font-medium">{it.label}</span>
+                  {it.detail && (
+                    <span className="text-gray-500"> — {it.detail}</span>
+                  )}
+                  {it.url && (
+                    <a
+                      href={it.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="ml-1 text-blue-500 hover:underline"
+                    >
+                      ↗
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      })}
     </div>
   )
 }
