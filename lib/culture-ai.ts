@@ -85,6 +85,9 @@ BAD (too generic — do not return these):
 - "Beauty Trends" → describes a whole category
 - "Food Content" → meaningless
 - "Popular Hashtags" → not a trend
+- "Mother's Day Celebrations" → calendar event, not a trend
+- "Easter content" / "Christmas hype" → holiday surge, belongs in moments planner not here
+- "GLP-1 Supplements" → generic product category without specific brand/named product
 
 GOOD (specific and named):
 - "Lorde's 'What Was That' used for dramatic reveal formats" — specific song + format
@@ -93,7 +96,11 @@ GOOD (specific and named):
 - "Cowboy core fashion aesthetic" — named trend with clear visual identity
 - "Dubai chocolate bar craze" — specific product trend with name
 
-RULE: If you cannot give it a specific name that someone could Google and find — skip it.
+RULE 1: If you cannot give it a specific name that someone could Google and find — skip it.
+
+RULE 2: DO NOT extract holiday content surges (Mother's Day celebrations, Easter content, Christmas hype, Father's Day appreciation, Valentine's posts, Halloween costumes generally). These are calendar events — they belong in a separate moments planner. ONLY extract a holiday-adjacent trend if it has a SPECIFIC named anchor on top, e.g. "Charli XCX surprise Mother's Day Twitch concert" or "Sephora 50% off Mother's Day drop".
+
+RULE 3: DO NOT extract generic product categories. A specific named product (e.g. "Trader Joe's insulated mini totes", "Dubai chocolate bar") is fine. "Remineralizing gum" or "GLP-1 supplements" without a brand name is not.
 
 # FIELDS PER TREND
 - name: specific label (e.g. "Strawberry girl summer aesthetic", not "summer aesthetics")
@@ -163,6 +170,12 @@ function normalizeTrend(
     return null
   }
 
+  // Reject calendar-anchored content surges (Mother's Day Celebrations etc.)
+  // — these peak on the day and are too late by the time they reach Action.
+  if (looksLikePostEventSurge(name, description)) {
+    return null
+  }
+
   const category = isCategory(raw.category) ? raw.category : fallbackCategory
   const contentType = isContentType(raw.contentType) ? raw.contentType : 'format'
 
@@ -208,6 +221,58 @@ function isContentType(v: unknown): v is AIIdentifiedTrend['contentType'] {
 
 function clampInt(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, Math.round(n)))
+}
+
+// ── Post-event holiday filter ──────────────────────────────────────────────
+//
+// Trends like "Mother's Day Celebrations" peak ON the holiday and die within
+// 24-48h. By the time they surface in Culture Radar (lag from scrape to
+// dashboard) they're already too late to act on. These calendar-anchored
+// content surges belong in Moments Radar's forward-looking view, not in the
+// "trending right now" Culture Radar.
+//
+// Reject any trend whose name contains a major holiday keyword PLUS a
+// generic event noun (celebration, content, day, hype).
+
+const HOLIDAY_KEYWORDS = [
+  // Mother / Father (multi-lang)
+  "mother's day", 'mothers day', 'moederdag', 'fête des mères', 'festa della mamma',
+  'día de la madre', 'dia da mãe', 'muttertag', 'anyák napja', 'dzień matki',
+  "father's day", 'fathers day', 'vaderdag', 'fête des pères', 'vatertag',
+  'día del padre', 'dia do pai',
+  // Religious / calendar
+  "valentine's day", 'valentijnsdag', 'valentijn',
+  'easter sunday', 'pasen', 'pâques', 'ostern',
+  'carnival', 'carnaval', 'mardi gras',
+  "king's day", 'koningsdag',
+  'halloween',
+  'sinterklaas',
+  'christmas eve', 'christmas day', "new year's eve",
+  // Public events / awards
+  'met gala', 'cannes film festival',
+  'eurovision',
+  'oscars', 'grammys',
+]
+
+const POST_EVENT_GENERIC_SUFFIXES = [
+  'celebrations', 'celebration', 'content', 'hype', 'season',
+  'recap', 'wave', 'rush', 'craze', 'discussions',
+]
+
+function looksLikePostEventSurge(name: string, description: string): boolean {
+  const lowerName = name.toLowerCase()
+  const lowerDesc = description.toLowerCase()
+  const hasHoliday = HOLIDAY_KEYWORDS.some(
+    (kw) => lowerName.includes(kw) || lowerDesc.includes(kw),
+  )
+  if (!hasHoliday) return false
+  const hasGenericSuffix = POST_EVENT_GENERIC_SUFFIXES.some(
+    (suf) => lowerName.includes(suf),
+  )
+  // If both holiday word AND generic suffix → reject.
+  // Specific named trends like "Mother's Day Charli XCX merch" survive
+  // because they have a named anchor on top.
+  return hasGenericSuffix
 }
 
 // ── Generic trend filter ────────────────────────────────────────────────────
