@@ -91,25 +91,33 @@ export async function discoverDailyCreators(opts: {
     ? CREATOR_LENSES.find((l) => l.tag === opts.lensOverride) ?? todayLens()
     : todayLens()
 
-  const query = `Give me ${count} specific TikTok / Instagram creators that fit this profile: ${lens.prompt}.
+  const query = `List ${count} REAL, VERIFIABLE creators on TikTok / Instagram / YouTube that fit this profile: ${lens.prompt}.
 
-For each creator return:
-- Exact @handle (including the @)
-- Platform (TikTok / Instagram / YouTube)
-- Direct profile URL (https://www.tiktok.com/@handle or instagram.com/handle)
-- Display name if different from handle
-- Niche (1 short sentence describing what they make)
-- Why they matter for a brand marketing team to know (1 short sentence)
-- Follower count (approximate number — 350K, 2.1M, etc.)
-- Country (where the creator is based / which audience they speak to)
-- 2-3 direct video URLs (tiktok.com/@handle/video/19digitid) showing the format
-- Tags: 3-5 keyword tags about their content
+CRITICAL RULES:
+1. DO NOT invent creators. If you cannot confirm the @handle exists, skip it.
+2. Each creator MUST be referenced in at least one cited source (news article, brand database, social media press, listicle from a real outlet).
+3. NO themed-sounding made-up handles like @pierogimadness or @globalglitchguru. Real creators rarely have on-the-nose names matching their niche.
+4. Prefer creators that already have Wikipedia pages, press coverage, brand partnerships, or appeared in published 'creators to watch' articles from real outlets like NYTimes, Bustle, Cosmopolitan, NRC, Dazed, etc.
 
-Format as a markdown numbered list. Each creator gets a bullet block with the fields above. Skip mainstream A-list creators with 10M+ followers — focus on under-the-radar but quality. Include creators from multiple countries (NL, BE, FR, DE, ES, IT, PL, UK, US, GLOBAL) when possible. Be specific, no generic recommendations.`
+For each creator, output in this EXACT markdown structure (one block per creator, separated by a blank line):
+
+### 1. @handle
+- **Platform:** TikTok | Instagram | YouTube
+- **Profile URL:** https://www.tiktok.com/@... (full URL)
+- **Name:** Real display name
+- **Niche:** One short sentence describing what they make.
+- **Why:** One sentence on why a brand marketing team would want to know about them.
+- **Followers:** Approximate count (350K / 2.1M).
+- **Country:** NL | BE | FR | DE | ES | IT | PL | UK | US | GLOBAL.
+- **Videos:** Direct video URLs, one per line.
+- **Tags:** keyword1, keyword2, keyword3.
+- **Source:** Citation reference [1] or named outlet that confirms this creator exists.
+
+Skip mainstream celebrities with 10M+ followers. Focus on real under-the-radar quality creators with documented existence. If you can only find 10 real ones, return 10 — don't pad with fabrications.`
 
   const research = await perplexitySearch(query, {
     model: 'sonar-pro',
-    systemPromptOverride: `You are a creator-discovery researcher. Find specific real creators with real @handles. Include real follower counts. Skip mainstream celebrities — focus on niche creators a brand team would NOT already know.`,
+    systemPromptOverride: `You are a creator-discovery researcher. ONLY list real creators whose existence is documented in articles, press coverage, or established databases. Fabricated, plausible-sounding handles are STRICTLY forbidden. When in doubt, leave them out. Real creators have unremarkable, hard-to-guess @handles, not on-the-nose theme names.`,
   })
 
   if (!research.ok || !research.text) {
@@ -123,8 +131,12 @@ Format as a markdown numbered list. Each creator gets a bullet block with the fi
 // ── Markdown parser ────────────────────────────────────────────────────────
 
 function parseCreators(text: string, lensTag: string): DiscoveredCreator[] {
-  // Split into blocks per numbered creator (1. ... 2. ...)
-  const blocks = text.split(/(?=^\s*\d+\.\s)/m).filter((b) => b.trim().length > 50)
+  // Split into blocks per numbered creator. Accepts either:
+  //   - "### 1. @handle"  (new structured format)
+  //   - "1. @handle"      (legacy plain numbered list)
+  const blocks = text
+    .split(/(?=^#{1,3}\s*\d+\.\s|^\s*\d+\.\s)/m)
+    .filter((b) => b.trim().length > 50)
   const creators: DiscoveredCreator[] = []
 
   for (const block of blocks) {
@@ -193,10 +205,11 @@ function extractFirstUrl(text: string, includes: string[]): string {
 
 function extractField(text: string, keys: string[]): string {
   for (const key of keys) {
-    const re = new RegExp(`\\*?\\*?${key}\\*?\\*?\\s*[:—-]\\s*([^\n]+)`, 'i')
+    // Match: "- **Key:** value", "**Key:** value", "Key: value", "Key — value"
+    const re = new RegExp(`(?:^|\\n)\\s*[-*]?\\s*\\*?\\*?${key}\\*?\\*?\\s*[:—-]\\s*([^\\n]+)`, 'i')
     const m = text.match(re)
     if (m) {
-      return m[1].trim().replace(/^\*+|\*+$/g, '').slice(0, 280)
+      return m[1].trim().replace(/^\*+|\*+$/g, '').replace(/\[\d+(?:,\s*\d+)*\]/g, '').trim().slice(0, 280)
     }
   }
   return ''
@@ -232,6 +245,39 @@ function extractTags(text: string, lensTag: string): string[] {
   return Array.from(tags).slice(0, 6)
 }
 
+/**
+ * Validate a TikTok profile URL by fetching it and checking the <title>.
+ * Non-existent accounts show "Couldn't find this account" instead of the
+ * creator's name. Returns false if the account doesn't exist.
+ */
+async function isLiveTikTokProfile(url: string): Promise<boolean> {
+  if (!url.includes('tiktok.com/@')) return true  // only validate TikTok handles
+  try {
+    const controller = new AbortController()
+    const t = setTimeout(() => controller.abort(), 6000)
+    const res = await fetch(url, {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html',
+      },
+    })
+    clearTimeout(t)
+    if (!res.ok) return false
+    const html = await res.text()
+    // TikTok shows "Couldn't find this account" for missing handles.
+    if (/Couldn't find this account/i.test(html)) return false
+    if (/no longer available/i.test(html)) return false
+    return true
+  } catch {
+    // Network errors → assume invalid to be safe
+    return false
+  }
+}
+
 // ── Persistence ────────────────────────────────────────────────────────────
 
 export async function saveDailyCohort(
@@ -242,8 +288,15 @@ export async function saveDailyCohort(
   let inserted = 0
 
   for (const c of creators) {
-    // Verify only the video URLs (profile URLs use a different shape —
-    // /@handle without /video/ — so verifyVideoUrls always rejects them).
+    // Validate the profile URL — TikTok 200-responds for missing handles
+    // but the HTML title contains "Couldn't find this account".
+    const profileOk = await isLiveTikTokProfile(c.profileUrl)
+    if (!profileOk) {
+      console.log('[creator-radar] dropped fabricated handle:', c.handle)
+      continue
+    }
+
+    // Verify the video URLs separately (different validator path).
     let verifiedVideos = c.exampleVideoUrls
     if (c.exampleVideoUrls.length > 0) {
       const results = await verifyVideoUrls(c.exampleVideoUrls, {
