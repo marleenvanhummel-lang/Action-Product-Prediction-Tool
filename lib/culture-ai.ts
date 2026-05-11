@@ -102,6 +102,8 @@ RULE 2: DO NOT extract holiday content surges (Mother's Day celebrations, Easter
 
 RULE 3: DO NOT extract generic product categories. A specific named product (e.g. "Trader Joe's insulated mini totes", "Dubai chocolate bar") is fine. "Remineralizing gum" or "GLP-1 supplements" without a brand name is not.
 
+RULE 4: DO NOT surface mature/established movements as fresh trends. Things like sourdough baking, kombucha, oat milk, matcha latte, ASMR, cottagecore, mob wife aesthetic, manifestation, bullet journaling, etc. have already had their viral moment YEARS ago. Only include them if there is a SPECIFIC new hook this month — e.g. "Charli XCX dropped a sourdough recipe video that hit 8M views" or "Izzio launched a new gluten-free bread line that is going viral on TikTok with #IzzioLaunch". Otherwise skip them — Action's marketing team is past these movements.
+
 # FIELDS PER TREND
 - name: specific label (e.g. "Strawberry girl summer aesthetic", not "summer aesthetics")
 - description: 2-3 sentences: (1) what it looks like specifically, (2) who's doing it, (3) why NOW
@@ -193,11 +195,16 @@ function normalizeTrend(
         .map((h) => (h.startsWith('#') ? h : `#${h}`))
     : []
 
-  const popularityScore = clampInt(
+  let popularityScore = clampInt(
     typeof raw.popularityScore === 'number' ? raw.popularityScore : 5,
     1,
     10,
   )
+
+  // Demote mature concepts without a fresh hook so they don't claim Top 10.
+  if (looksLikeMatureConcept(name, description)) {
+    popularityScore = Math.min(popularityScore, 5)
+  }
 
   const estimatedViews =
     typeof raw.estimatedViews === 'string' ? raw.estimatedViews : undefined
@@ -240,6 +247,52 @@ function clampInt(n: number, lo: number, hi: number): number {
 //
 // Reject any trend whose name contains a major holiday keyword PLUS a
 // generic event noun (celebration, content, day, hype).
+
+// ── Mature concept filter ──────────────────────────────────────────────────
+//
+// Established movements that have ALREADY had their viral moment years ago.
+// A trend mentioning these without a SPECIFIC fresh hook (this-month brand
+// launch, named viral creator with a recent video, a specific new product
+// drop) gets demoted from popularity 8-10 to 5-6 — keeps it in the radar
+// but stops it from claiming the Top 10.
+const MATURE_CONCEPTS = [
+  // Food / drink (peaked 2020-2023)
+  'sourdough', 'kombucha', 'oat milk', 'matcha latte', 'matcha',
+  'avocado toast', 'overnight oats', 'bulletproof coffee',
+  'celery juice', 'golden milk',
+  // Lifestyle / wellness (peaked 2018-2022)
+  'mindfulness', 'self-care sunday', 'cold plunge', 'cold shower',
+  'bullet journal', 'bullet journaling',
+  'gratitude journal', 'vision board', 'manifestation',
+  'asmr', 'minimalism lifestyle',
+  // Aesthetics that already had their viral peak
+  'cottagecore', 'dark academia', 'goblincore', 'y2k aesthetic',
+  'mob wife', 'tomato girl', 'clean girl aesthetic',
+  // Workout / fitness (long-established)
+  'hot yoga', 'spin class', 'crossfit', 'paleo diet', 'keto diet',
+  // Tech (mature)
+  'metaverse', 'web3', 'nft', 'crypto',
+]
+
+// Signals that override the mature-concept demotion — if any of these appear
+// in the description, we trust there's a genuine fresh hook.
+const FRESH_HOOK_SIGNALS = [
+  /\b(launched|launching|just released|just dropped|premiered|debuted)\b/i,
+  /\b(this week|this month|today|yesterday|last 7 days|last week)\b/i,
+  /\b\d+m\s+views?\s+in\s+(a\s+)?(week|month|day|days)/i,
+  /\b\d+x\s+(growth|increase)/i,
+  /#\d+\s+(trending|spot)/i,
+  /\b(charli xcx|taylor swift|beyonc[eé]|kim k|kardashian|drake|sabrina carpenter)\b/i,
+]
+
+function looksLikeMatureConcept(name: string, description: string): boolean {
+  const text = `${name} ${description}`.toLowerCase()
+  const hitsMature = MATURE_CONCEPTS.some((kw) => text.includes(kw))
+  if (!hitsMature) return false
+  // Has a fresh hook? Let it through at full popularity.
+  const hasFreshHook = FRESH_HOOK_SIGNALS.some((re) => re.test(`${name} ${description}`))
+  return !hasFreshHook
+}
 
 const HOLIDAY_KEYWORDS = [
   // Mother / Father (multi-lang)
