@@ -85,9 +85,27 @@ function blankForm() {
 
 // ── Page ───────────────────────────────────────────────────────────────────
 
+const COUNTRIES: { code: string; flag: string; name: string }[] = [
+  { code: 'NL', flag: '🇳🇱', name: 'Netherlands' },
+  { code: 'BE', flag: '🇧🇪', name: 'Belgium' },
+  { code: 'FR', flag: '🇫🇷', name: 'France' },
+  { code: 'DE', flag: '🇩🇪', name: 'Germany' },
+  { code: 'AT', flag: '🇦🇹', name: 'Austria' },
+  { code: 'CH', flag: '🇨🇭', name: 'Switzerland' },
+  { code: 'ES', flag: '🇪🇸', name: 'Spain' },
+  { code: 'IT', flag: '🇮🇹', name: 'Italy' },
+  { code: 'PT', flag: '🇵🇹', name: 'Portugal' },
+  { code: 'PL', flag: '🇵🇱', name: 'Poland' },
+  { code: 'CZ', flag: '🇨🇿', name: 'Czechia' },
+  { code: 'SK', flag: '🇸🇰', name: 'Slovakia' },
+  { code: 'HU', flag: '🇭🇺', name: 'Hungary' },
+  { code: 'RO', flag: '🇷🇴', name: 'Romania' },
+]
+
 export default function CultureRadarPage() {
   const [view, setView] = useState<View>('daily')
   const [category, setCategory] = useState<string>('')
+  const [country, setCountry] = useState<string>('')
   const [trends, setTrends] = useState<CultureTrend[]>([])
   const [sources, setSources] = useState<CultureSource[]>([])
   const [week, setWeek] = useState<string>('')
@@ -111,6 +129,7 @@ export default function CultureRadarPage() {
     try {
       const params = new URLSearchParams({ view })
       if (category) params.set('category', category)
+      if (country) params.set('country', country)
       const res = await apiFetch(`/api/culture/trends?${params}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data: TrendsResponse = await res.json()
@@ -121,7 +140,7 @@ export default function CultureRadarPage() {
     } finally {
       setLoading(false)
     }
-  }, [view, category])
+  }, [view, category, country])
 
   const loadSources = useCallback(async () => {
     try {
@@ -428,6 +447,40 @@ export default function CultureRadarPage() {
           >
             {showSources ? 'Hide' : 'Show'} sources
           </button>
+        </div>
+
+        {/* Country filter */}
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            onClick={() => setCountry('')}
+            className="px-2.5 py-1 text-[11px] rounded-full border transition-all"
+            style={{
+              fontFamily: 'var(--font-body)',
+              borderColor: country === '' ? 'var(--action-red)' : '#e5e7eb',
+              color: country === '' ? 'var(--action-red)' : '#4a4f5c',
+              backgroundColor: country === '' ? '#fef2f2' : '#ffffff',
+              fontWeight: country === '' ? 600 : 500,
+            }}
+          >
+            🇪🇺 All EU
+          </button>
+          {COUNTRIES.map((c) => (
+            <button
+              key={c.code}
+              onClick={() => setCountry(c.code)}
+              className="px-2.5 py-1 text-[11px] rounded-full border transition-all"
+              style={{
+                fontFamily: 'var(--font-body)',
+                borderColor: country === c.code ? 'var(--action-red)' : '#e5e7eb',
+                color: country === c.code ? 'var(--action-red)' : '#4a4f5c',
+                backgroundColor: country === c.code ? '#fef2f2' : '#ffffff',
+                fontWeight: country === c.code ? 600 : 500,
+              }}
+              title={c.name}
+            >
+              {c.flag} {c.code}
+            </button>
+          ))}
         </div>
 
         {/* Category chips */}

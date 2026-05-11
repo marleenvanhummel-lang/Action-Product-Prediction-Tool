@@ -85,6 +85,7 @@ export interface CultureTrend {
   estimatedViews: string | null
   status: 'active' | 'archived' | 'flagged'
   brandBrief: ActionBrief | null  // Action-specific analysis
+  countryRelevance: ActionCountry[]  // Empty array = global (shown everywhere)
 }
 
 export type PredictionType = 'emerging' | 'lifecycle' | 'seasonal'

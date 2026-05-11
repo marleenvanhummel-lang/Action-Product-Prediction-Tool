@@ -86,6 +86,7 @@ interface TrendRowDB {
   estimated_views: string | null
   status: string
   brand_brief: ActionBrief | null
+  country_relevance: string[] | null
 }
 
 interface ExistingTrendForUpsert {
@@ -407,6 +408,7 @@ export interface ListTrendsArgs {
   week: string
   view: 'daily' | 'weekly' | 'all' | 'emerging'
   category: string | null
+  country?: string | null  // ActionCountry code; null = no filter
   limit: number
   includeArchived: boolean
 }
@@ -419,6 +421,14 @@ export async function listTrends(args: ListTrendsArgs): Promise<TrendRowDB[]> {
   if (args.category) {
     params.push(args.category)
     conditions.push(`category = $${params.length}`)
+  }
+  if (args.country) {
+    // Show trend if it's tagged with the selected country OR if it has
+    // no country tags (global trends are shown on every country filter).
+    params.push(args.country)
+    conditions.push(
+      `(country_relevance IS NULL OR cardinality(country_relevance) = 0 OR $${params.length}::text = ANY(country_relevance))`,
+    )
   }
 
   let orderBy: string
@@ -444,7 +454,7 @@ export async function listTrends(args: ListTrendsArgs): Promise<TrendRowDB[]> {
             category, content_type, hashtags, example_urls, thumbnail_url,
             popularity_score, freshness_score, validation_score, reasoning,
             source_ids, source_names, daily_rank, weekly_rank, rank_date,
-            rank_week, estimated_views, status, brand_brief
+            rank_week, estimated_views, status, brand_brief, country_relevance
        FROM culture_trends
       WHERE ${conditions.join(' AND ')}
       ORDER BY ${orderBy}
@@ -508,5 +518,6 @@ export function rowToTrend(row: TrendRowDB): CultureTrend {
     estimatedViews: row.estimated_views,
     status: row.status as CultureTrend['status'],
     brandBrief: row.brand_brief ?? null,
+    countryRelevance: (row.country_relevance ?? []) as CultureTrend['countryRelevance'],
   }
 }
