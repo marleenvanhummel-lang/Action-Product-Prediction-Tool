@@ -199,7 +199,6 @@ function normalizeTrend(
     10,
   )
 
-  const reasoning = typeof raw.reasoning === 'string' ? raw.reasoning : ''
   const estimatedViews =
     typeof raw.estimatedViews === 'string' ? raw.estimatedViews : undefined
   const exampleUrls = Array.isArray(raw.exampleUrls)
