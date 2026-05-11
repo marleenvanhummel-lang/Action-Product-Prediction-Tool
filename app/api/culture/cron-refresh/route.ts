@@ -22,6 +22,7 @@ import { POST as backfillBriefsHandler } from '@/app/api/culture/backfill-briefs
 import { POST as verifyUrlsHandler } from '@/app/api/culture/verify-urls/route'
 import { POST as scanCreatorsHandler } from '@/app/api/culture/scan-creators/route'
 import { POST as recomputeBundlesHandler } from '@/app/api/culture/recompute-bundles/route'
+import { POST as enrichMindmapsHandler } from '@/app/api/culture/enrich-mindmaps/route'
 import { POST as momentsFetchHandler } from '@/app/api/moments/fetch/route'
 import { POST as momentsBriefsHandler } from '@/app/api/moments/backfill-briefs/route'
 import { POST as momentsEnrichHandler } from '@/app/api/moments/enrich-topics/route'
@@ -178,6 +179,8 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Step 2c: Recompute bundle keys ────────────────────────────────────
+  let bundlesUpdated = 0
+  let bundlesCleared = 0
   if (!fetchError) {
     try {
       const bundleReq = new NextRequest(new URL('http://internal/api/culture/recompute-bundles'), {
@@ -185,7 +188,29 @@ export async function GET(req: NextRequest) {
         headers: { authorization: expectedBearer, 'content-type': 'application/json' },
         body: JSON.stringify({}),
       })
-      await recomputeBundlesHandler(bundleReq)
+      const r = await recomputeBundlesHandler(bundleReq)
+      const d = (await r.json()) as { updated?: number; cleared?: number }
+      bundlesUpdated = d.updated ?? 0
+      bundlesCleared = d.cleared ?? 0
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  // ── Step 2d: Mindmap enrichment (Context & connections per trend) ─────
+  // One batch of 12 trends per cron run, ranked by daily_rank. The top
+  // hero/featured trends get a mindmap within one day of going active.
+  let mindmapsEnriched = 0
+  if (!fetchError) {
+    try {
+      const mindmapReq = new NextRequest(new URL('http://internal/api/culture/enrich-mindmaps'), {
+        method: 'POST',
+        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
+        body: JSON.stringify({ limit: 12 }),
+      })
+      const r = await enrichMindmapsHandler(mindmapReq)
+      const d = (await r.json()) as { enriched?: number }
+      mindmapsEnriched = d.enriched ?? 0
     } catch {
       /* best-effort */
     }
@@ -228,6 +253,9 @@ export async function GET(req: NextRequest) {
     urlsKept,
     urlsDropped,
     creatorsScanned,
+    bundlesUpdated,
+    bundlesCleared,
+    mindmapsEnriched,
     isMonthStart,
     momentsError,
     momentsSummary,

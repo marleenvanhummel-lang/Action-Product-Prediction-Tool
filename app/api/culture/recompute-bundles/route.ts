@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
   )) as Row[]
 
   let updated = 0
+  let cleared = 0
   for (const r of rows) {
     const key = computeBundleKey(r.name, r.hashtags ?? [])
     if (key) {
@@ -45,6 +46,13 @@ export async function POST(req: NextRequest) {
         [key, r.id],
       )
       updated++
+    } else {
+      // Clear any stale bundle_key from a previous (over-aggressive) run.
+      await sql().query(
+        `UPDATE culture_trends SET bundle_key = NULL WHERE id = $1 AND bundle_key IS NOT NULL`,
+        [r.id],
+      )
+      cleared++
     }
   }
 
@@ -65,6 +73,7 @@ export async function POST(req: NextRequest) {
     week,
     processed: rows.length,
     updated,
+    cleared,
     bundles: bundles.map((b) => ({ key: b.bundle_key, count: Number(b.n), members: b.members })),
   })
 }
