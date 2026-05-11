@@ -3,7 +3,7 @@
   "crons": [
     {
       "path": "/api/culture/cron-refresh",
-      "schedule": "0 5 * * *"
+      "schedule": "0 7 * * *"
     }
   ]
 }

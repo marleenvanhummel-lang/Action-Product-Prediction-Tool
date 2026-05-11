@@ -26,11 +26,14 @@ export function middleware(request: NextRequest) {
 
   if (!pathname.startsWith('/api/')) return NextResponse.next()
 
-  // --- Auth check (skip for SSE streams and /api/auth/* routes) ---
+  // --- Auth check (skip for SSE streams, /api/auth/*, and public report) ---
   const isSSE = pathname.endsWith('/stream') && request.method === 'GET'
   const isAuthRoute = pathname.startsWith('/api/auth/')
+  // The culture report is intentionally public — team forwards it via
+  // Slack / WhatsApp / email and external recipients shouldn't need auth.
+  const isPublicReport = pathname === '/api/culture/report.html'
   const secret = process.env.API_SECRET
-  if (!isSSE && !isAuthRoute) {
+  if (!isSSE && !isAuthRoute && !isPublicReport) {
     if (!secret) {
       // API_SECRET not configured — reject all API requests in production
       console.error('[Middleware] API_SECRET environment variable is not set')
