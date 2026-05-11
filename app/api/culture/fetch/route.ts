@@ -33,6 +33,12 @@ import { CULTURE_GEMINI_MODEL } from '@/lib/constants'
 import { fetchGoogleTrends, type GoogleTrendItem } from '@/lib/google-trends'
 import { perplexitySearch, perplexityToMarkdown } from '@/lib/perplexity'
 import {
+  fetchCreativeCenterHashtags,
+  industryToCategory,
+  popularityFromPostCount,
+  type CreativeCenterHashtag,
+} from '@/lib/tiktok-cc'
+import {
   freshnessScore,
   isoDate,
   isoWeek,
@@ -160,6 +166,28 @@ export async function POST(req: Request) {
   if (!body.skipAi && okScrapes.length > 0) {
     const aiResults = await runConcurrent(okScrapes, AI_CONCURRENCY, async (scrape) => {
       try {
+        // ── Shortcut for pre-structured sources (TikTok Creative Center) ──
+        // These already produce structured trend data — skip the Gemini step.
+        if (scrape.textSnippet.startsWith('{"__tiktok_cc_hashtags":')) {
+          try {
+            const parsed = JSON.parse(scrape.textSnippet) as {
+              __tiktok_cc_hashtags: CreativeCenterHashtag[]
+            }
+            const trends = convertCCHashtagsToTrends(
+              parsed.__tiktok_cc_hashtags,
+              scrape.sourceCategory,
+            )
+            return trends.map((t) => ({
+              ...t,
+              sourceId: scrape.sourceId,
+              sourceName: scrape.sourceName,
+            }))
+          } catch (err) {
+            console.error(`[culture/fetch] CC conversion failed for ${scrape.sourceName}`, err)
+            return []
+          }
+        }
+
         const ai = await analyzeSourceContent({
           sourceName: scrape.sourceName,
           sourceCategory: scrape.sourceCategory,
@@ -273,14 +301,18 @@ export async function POST(req: Request) {
 
 async function scrapeSource(source: SourceRow, lookbackDays: number): Promise<ScrapeResult> {
   // Dispatch on source_type:
-  //   - google_trends_api → direct API call, no Firecrawl
-  //   - perplexity_query  → ask Perplexity, use answer + citations as content
-  //   - everything else   → Firecrawl markdown scrape
+  //   - google_trends_api      → direct API call, no Firecrawl
+  //   - perplexity_query       → ask Perplexity, use answer + citations as content
+  //   - tiktok_cc_hashtag      → scrape TikTok Creative Center SSR, real metrics
+  //   - everything else        → Firecrawl markdown scrape
   if (source.source_type === 'google_trends_api') {
     return scrapeGoogleTrends(source)
   }
   if (source.source_type === 'perplexity_query') {
     return scrapePerplexity(source)
+  }
+  if (source.source_type === 'tiktok_cc_hashtag') {
+    return scrapeTikTokCC(source)
   }
 
   const scrapeUrl = widenUrlForLookback(source.url, source.source_type, lookbackDays)
@@ -386,6 +418,115 @@ async function scrapeGoogleTrends(source: SourceRow): Promise<ScrapeResult> {
       error: err instanceof Error ? err.message : String(err),
     }
   }
+}
+
+/**
+ * TikTok Creative Center scraper: hits the SSR HTML, parses out the
+ * embedded JSON, gets REAL post counts + view counts + rank per hashtag.
+ *
+ * Returns trends pre-formatted so the downstream pipeline can insert them
+ * without going through Gemini (the data is already structured).
+ *
+ * The source's `notes` field can contain a country code override
+ * (e.g. "NL", "FR"). Defaults to the country implied by source name.
+ */
+async function scrapeTikTokCC(source: SourceRow): Promise<ScrapeResult> {
+  const fetchedAt = new Date().toISOString()
+  // Country code is in source.notes (e.g. "NL"), fall back to scanning the
+  // source name for a known country code.
+  const countryCode =
+    source.notes?.trim().toUpperCase() ||
+    extractCountryFromName(source.name) ||
+    ''
+
+  try {
+    const result = await fetchCreativeCenterHashtags(countryCode, 7)
+    if (!result.ok || result.hashtags.length === 0) {
+      return {
+        sourceId: source.id,
+        sourceName: source.name,
+        sourceCategory: source.category,
+        url: source.url,
+        ok: false,
+        fetchedAt,
+        textSnippet: '',
+        topLinks: [],
+        error: result.error ?? 'no_hashtags',
+      }
+    }
+    return {
+      sourceId: source.id,
+      sourceName: source.name,
+      sourceCategory: source.category,
+      url: source.url,
+      ok: true,
+      fetchedAt,
+      // We attach the hashtag JSON as a side channel so the pipeline can
+      // skip the AI step. The textSnippet is set to a small marker so the
+      // existing code path doesn't choke on it.
+      textSnippet: JSON.stringify({ __tiktok_cc_hashtags: result.hashtags }),
+      topLinks: result.hashtags
+        .slice(0, 10)
+        .map((h) => `https://www.tiktok.com/tag/${encodeURIComponent(h.hashtagName)}`),
+    }
+  } catch (err) {
+    return {
+      sourceId: source.id,
+      sourceName: source.name,
+      sourceCategory: source.category,
+      url: source.url,
+      ok: false,
+      fetchedAt,
+      textSnippet: '',
+      topLinks: [],
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
+
+function extractCountryFromName(name: string): string {
+  const m = name.match(/\b(NL|FR|DE|BE|ES|IT|PL|CZ|SK|HU|AT|CH|RO|PT)\b/)
+  return m ? m[1] : ''
+}
+
+/**
+ * Convert TikTok Creative Center hashtag list directly to AIIdentifiedTrend
+ * format. Skips the Gemini extraction step — the data is already structured
+ * and the numbers are real.
+ */
+function convertCCHashtagsToTrends(
+  hashtags: CreativeCenterHashtag[],
+  sourceCategory: string,
+): AIIdentifiedTrend[] {
+  return hashtags.map((h) => {
+    const popularity = popularityFromPostCount(h.publishCnt)
+    const directionWord = h.rankDiff > 0 ? 'climbing' : h.rankDiff < 0 ? 'falling' : 'steady'
+    const direction = h.rankDiff !== 0 ? ` (${directionWord} ${Math.abs(h.rankDiff)} positions)` : ''
+    const viewsStr = h.videoViews >= 1_000_000
+      ? `${(h.videoViews / 1_000_000).toFixed(1)}M`
+      : h.videoViews >= 1_000
+        ? `${(h.videoViews / 1_000).toFixed(0)}K`
+        : String(h.videoViews)
+
+    return {
+      name: `#${h.hashtagName}`,
+      description:
+        `Trending hashtag on TikTok ${h.countryCode || 'globally'}. ` +
+        `Currently ranked #${h.rank}${direction} with ${h.publishCnt.toLocaleString()} ` +
+        `posts and ${viewsStr} total video views over the last 7 days. ` +
+        (h.industry ? `Industry: ${h.industry}.` : ''),
+      category: (industryToCategory(h.industry) ||
+        sourceCategory) as AIIdentifiedTrend['category'],
+      contentType: 'hashtag',
+      hashtags: [`#${h.hashtagName}`],
+      popularityScore: popularity,
+      reasoning: `Real TikTok Creative Center data: rank #${h.rank}, ${h.publishCnt} posts, ${h.videoViews} views over 7 days. No AI inference.`,
+      estimatedViews: `#${h.rank} TikTok ${h.countryCode || 'global'} · ${viewsStr} views · ${h.publishCnt.toLocaleString()} posts`,
+      exampleUrls: [
+        `https://www.tiktok.com/tag/${encodeURIComponent(h.hashtagName)}`,
+      ],
+    }
+  })
 }
 
 /**
