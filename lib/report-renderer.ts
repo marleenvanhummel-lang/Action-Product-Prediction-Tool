@@ -359,31 +359,74 @@ export function renderReportHtml(data: ReportData): string {
   <tr>
     <td align="center" style="padding:24px 16px;">
       <table cellpadding="0" cellspacing="0" border="0" width="760" style="max-width:760px;background:#FFFDF3;">
-        <!-- Hero header — JackandAI: black slab with massive red headline -->
+        <!-- Magazine cover: hero trend image + branded headline -->
         <tr>
-          <td style="padding:48px 40px 40px;background:#000000;color:#FFFDF3;">
+          <td style="padding:0;background:#000000;">
             <table cellpadding="0" cellspacing="0" border="0" width="100%">
               <tr>
-                <td>
-                  <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#FF1300;">JACK&amp;A!  ×  ACTION</p>
-                  <h1 style="margin:12px 0 6px 0;font-family:'Archivo Black',sans-serif;font-size:46px;line-height:0.95;font-weight:900;text-transform:uppercase;letter-spacing:-0.02em;color:#FFFDF3;">Culture<br/>Radar<span style="color:#FF1300;">.</span></h1>
-                  <p style="margin:12px 0 0 0;font-family:'Inter',sans-serif;font-size:14px;color:#FFFDF3;opacity:0.7;">${dateLabel}</p>
-                  <p style="margin:4px 0 0 0;font-family:'Inter',sans-serif;font-size:12px;color:#FF1300;font-weight:600;">${totalTrends} trends · ${data.upcomingMoments.length} upcoming moments · week ${data.week}</p>
+                <td style="padding:32px 40px 16px;color:#FFFDF3;">
+                  <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#FF1300;">JACK&amp;A!  ×  ACTION  ·  ISSUE ${data.week}</p>
                 </td>
               </tr>
+              <tr>
+                <td style="padding:0 40px 8px;color:#FFFDF3;">
+                  <h1 style="margin:0;font-family:'Archivo Black',sans-serif;font-size:88px;line-height:0.88;font-weight:900;text-transform:uppercase;letter-spacing:-0.035em;color:#FFFDF3;">Culture<br/>Radar<span style="color:#FF1300;">.</span></h1>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:16px 40px 0;">
+                  <table cellpadding="0" cellspacing="0" border="0" width="100%">
+                    <tr>
+                      <td valign="middle" style="border-top:1px solid #FFFDF3;padding-top:14px;">
+                        <p style="margin:0;font-family:'Newsreader',Georgia,serif;font-size:18px;color:#FFFDF3;font-style:italic;font-weight:300;">${dateLabel}</p>
+                      </td>
+                      <td valign="middle" align="right" style="border-top:1px solid #FFFDF3;padding-top:14px;">
+                        <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.18em;color:#FF1300;text-transform:uppercase;">${totalTrends} trends · ${data.upcomingMoments.length} moments · ${data.creators.length} creators</p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+              ${data.dailyTop10[0] ? `
+              <!-- Hero trend feature on cover -->
+              <tr>
+                <td style="padding:28px 40px 40px;">
+                  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:${data.dailyTop10[0].thumbnail_url ? '#000' : '#FFE3CC'};">
+                    <tr>
+                      <td style="padding:24px;${data.dailyTop10[0].thumbnail_url ? `background-image:linear-gradient(rgba(0,0,0,0.55),rgba(0,0,0,0.85)),url(${escapeHtml(data.dailyTop10[0].thumbnail_url)});background-size:cover;background-position:center;` : ''}">
+                        <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.2em;color:#FF1300;">★ TODAY'S #1</p>
+                        <h2 style="margin:10px 0 6px 0;font-family:'Archivo Black',sans-serif;font-size:42px;line-height:0.92;color:${data.dailyTop10[0].thumbnail_url ? '#FFFDF3' : '#000'};text-transform:uppercase;letter-spacing:-0.02em;">${escapeHtml(data.dailyTop10[0].name)}</h2>
+                        <p style="margin:8px 0 0 0;font-family:'Newsreader',Georgia,serif;font-size:16px;line-height:1.45;color:${data.dailyTop10[0].thumbnail_url ? '#FFFDF3' : '#000'};opacity:0.92;">${escapeHtml(data.dailyTop10[0].description.slice(0, 240))}${data.dailyTop10[0].description.length > 240 ? '…' : ''}</p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>` : ''}
             </table>
           </td>
         </tr>
         <!-- Red accent strip -->
         <tr><td style="background:#FF1300;height:6px;line-height:0;font-size:0;">&nbsp;</td></tr>
 
-        <!-- TLDR -->
+        <!-- Editor's note — magazine-style intro -->
         <tr>
-          <td style="padding:28px 40px 8px;background:#FFFDF3;">
-            <p style="margin:0;font-family:'Inter',sans-serif;font-size:14px;color:#000000;line-height:1.55;">
-              <strong style="font-family:'Archivo Black',sans-serif;color:#FF1300;text-transform:uppercase;letter-spacing:0.05em;font-size:11px;">TLDR &nbsp;→</strong>&nbsp;
-              Hieronder de top trends die NU spelen op TikTok, Reels en het bredere internet, plus de moments die we de komende weken kunnen oppakken. Klik op een trend om naar de video te gaan. Sounds met een <strong style="color:#FF1300;">✓</strong> zijn safe voor Action's business account.
-            </p>
+          <td style="padding:40px 40px 16px;background:#FFFDF3;">
+            <table cellpadding="0" cellspacing="0" border="0" width="100%">
+              <tr>
+                <td width="180" valign="top">
+                  <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.2em;color:#FF1300;text-transform:uppercase;">FROM THE EDITOR</p>
+                  <p style="margin:8px 0 0 0;font-family:'Newsreader',Georgia,serif;font-size:14px;color:#000;font-style:italic;font-weight:300;">${new Date(data.generatedAt).toLocaleDateString('nl-NL', { weekday: 'long' })}<br/>${data.week}</p>
+                </td>
+                <td valign="top" style="padding-left:24px;border-left:2px solid #000;">
+                  <p style="margin:0;font-family:'Newsreader',Georgia,serif;font-size:18px;line-height:1.55;color:#000;font-weight:400;">
+                    Deze week ${data.dailyTop10.length} trends die NU op de wereld vallen, ${data.inspiration.length} formats om uit te kopiëren, ${data.emerging.length} signalen die nog klein maar snel stijgen, ${data.creators.length} creators die het waard zijn om te volgen, en ${data.upcomingMoments.length} moments die in de komende 3 weken vallen.
+                  </p>
+                  <p style="margin:12px 0 0 0;font-family:'Inter',sans-serif;font-size:12px;color:#6b6b6b;">
+                    Klik op een trend om de bron-video te openen. Sounds met <strong style="color:#FF1300;">✓ SAFE</strong> zijn cleared voor Action's TikTok Business Account.
+                  </p>
+                </td>
+              </tr>
+            </table>
           </td>
         </tr>
 

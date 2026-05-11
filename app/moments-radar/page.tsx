@@ -196,42 +196,38 @@ export default function MomentsRadarPage() {
   }, [moments, effectiveDateFor])
 
   return (
-    <div className="min-h-screen">
-      {/* Header */}
-      <div className="border-b border-gray-200 bg-white px-8 py-5" style={{ paddingRight: 240 }}>
-        <div className="flex items-center justify-between">
+    <div className="jai-app" style={{ minHeight: '100vh' }}>
+      {/* JackandAI hero header */}
+      <div style={{ background: '#000', color: '#FFFDF3', padding: '40px 40px 28px', paddingRight: 240 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
           <div>
-            <h1
-              className="font-bold text-gray-900"
-              style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: 26,
-                letterSpacing: '0.01em',
-                lineHeight: 1.1,
-              }}
-            >
-              Moments Radar
+            <p className="jai-mono-label" style={{ color: '#FF1300', margin: 0 }}>JACK&amp;A! × ACTION</p>
+            <h1 style={{
+              fontFamily: 'var(--font-jai-display)',
+              fontSize: 56,
+              lineHeight: 0.92,
+              margin: '12px 0 4px 0',
+              color: '#FFFDF3',
+              textTransform: 'uppercase',
+              letterSpacing: '-0.025em',
+            }}>
+              Moments<br/>Radar<span style={{ color: '#FF1300' }}>.</span>
             </h1>
-            <p className="text-sm text-gray-500 mt-1">
-              Upcoming cultural moments and events to plan content around. {moments.length} active
-              in the next {horizon} days.
+            <p style={{ margin: '8px 0 0 0', fontSize: 13, color: '#FFFDF3', opacity: 0.7 }}>
+              Upcoming cultural moments. {moments.length} active in the next {horizon} days.
             </p>
           </div>
           <button
             onClick={runRefresh}
             disabled={refreshing}
-            className="px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50"
-            style={{
-              fontFamily: 'var(--font-body)',
-              backgroundColor: 'var(--action-red)',
-              color: '#ffffff',
-            }}
-            title="Discover new cultural moments via Perplexity + generate Action briefs"
+            className="jai-btn jai-btn-red"
+            style={{ opacity: refreshing ? 0.6 : 1 }}
           >
-            {refreshing ? (refreshStage ?? 'Working…') : 'Refresh from sources'}
+            {refreshing ? (refreshStage ?? 'Working…') : '↻ Refresh from sources'}
           </button>
         </div>
       </div>
+      <div style={{ height: 6, background: '#FF1300' }} />
 
       <div className="px-8 py-6 space-y-5">
         {error && (
