@@ -93,6 +93,7 @@ export default function CultureRadarPage() {
   const [week, setWeek] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [refreshStage, setRefreshStage] = useState<string | null>(null)
   const [refreshResult, setRefreshResult] = useState<FetchResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showSources, setShowSources] = useState(false)
@@ -150,6 +151,7 @@ export default function CultureRadarPage() {
     setRefreshing(true)
     setRefreshResult(null)
     setError(null)
+    setRefreshStage('Scraping sources + extracting trends…')
     try {
       const res = await apiFetch('/api/culture/fetch', {
         method: 'POST',
@@ -161,10 +163,42 @@ export default function CultureRadarPage() {
       setRefreshResult(data)
       await loadTrends()
       await loadSources()
+
+      // ── Auto-chain: generate Action briefs for new top trends ────────────
+      // We do this in two batches of 15 (with rate-limit cooldowns between)
+      // because Gemini occasionally rate-limits on bursts.
+      if (data.summary.inserted > 0 || data.summary.updated > 0) {
+        setRefreshStage('Generating Action briefs…')
+        let totalBriefed = 0
+        for (let pass = 0; pass < 2; pass++) {
+          try {
+            const briefRes = await apiFetch('/api/culture/backfill-briefs', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ limit: 15 }),
+            })
+            if (briefRes.ok) {
+              const briefData = (await briefRes.json()) as {
+                briefed: number
+                failed: number
+                processed: number
+              }
+              totalBriefed += briefData.briefed
+              if (briefData.processed === 0) break // nothing left
+            }
+          } catch {
+            /* best-effort */
+          }
+        }
+        setRefreshStage(`Generated ${totalBriefed} Action briefs.`)
+        await loadTrends()
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setRefreshing(false)
+      // Clear stage text after a moment
+      setTimeout(() => setRefreshStage(null), 4000)
     }
   }
 
@@ -301,8 +335,9 @@ export default function CultureRadarPage() {
                 backgroundColor: 'var(--action-red)',
                 color: '#ffffff',
               }}
+              title="Scrapes all sources + auto-generates Action briefs for top trends"
             >
-              {refreshing ? 'Refreshing…' : 'Refresh from sources'}
+              {refreshing ? (refreshStage ?? 'Working…') : 'Refresh from sources'}
             </button>
           </div>
         </div>
