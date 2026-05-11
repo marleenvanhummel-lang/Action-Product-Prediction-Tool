@@ -21,7 +21,7 @@ import { listTrends, rowToTrend } from '@/lib/culture-db'
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
-  const view = (searchParams.get('view') ?? 'all') as 'daily' | 'weekly' | 'all' | 'emerging'
+  const view = (searchParams.get('view') ?? 'all') as 'daily' | 'weekly' | 'all' | 'emerging' | 'inspiration'
   const category = searchParams.get('category')
   const country = searchParams.get('country')?.toUpperCase() || null
   const week = searchParams.get('week') ?? isoWeek()

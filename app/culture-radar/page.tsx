@@ -5,7 +5,7 @@ import { apiFetch } from '@/lib/api-client'
 import type { CultureSource, CultureTrend } from '@/types/culture'
 import { styleFor, LIFECYCLE_VISUAL } from './category-style'
 
-type View = 'daily' | 'weekly' | 'all' | 'emerging'
+type View = 'daily' | 'weekly' | 'all' | 'emerging' | 'inspiration'
 
 interface TrendsResponse {
   week: string
@@ -409,32 +409,42 @@ export default function CultureRadarPage() {
 
         {/* View tabs */}
         <div className="flex items-center justify-between">
-          <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1">
-            {(['daily', 'weekly', 'emerging', 'all'] as const).map((v) => (
+          <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1 flex-wrap">
+            {(['daily', 'weekly', 'inspiration', 'emerging', 'all'] as const).map((v) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
-                className="px-4 py-1.5 text-sm rounded-md transition-all"
+                className="px-3 py-1.5 text-sm rounded-md transition-all"
                 style={{
                   fontFamily: 'var(--font-body)',
                   backgroundColor:
                     view === v
                       ? v === 'emerging'
                         ? '#7c3aed'
-                        : 'var(--action-red)'
+                        : v === 'inspiration'
+                          ? '#0891b2'
+                          : 'var(--action-red)'
                       : 'transparent',
                   color: view === v ? '#ffffff' : '#4a4f5c',
                   fontWeight: view === v ? 600 : 500,
                 }}
-                title={v === 'emerging' ? 'Rising trends — low popularity but very fresh' : undefined}
+                title={
+                  v === 'emerging'
+                    ? 'Rising trends — low popularity but very fresh'
+                    : v === 'inspiration'
+                      ? 'Format-led inspiration — ways to MAKE content (editing tricks, video formats, visual signatures)'
+                      : undefined
+                }
               >
                 {v === 'daily'
                   ? 'Today (Top 10)'
                   : v === 'weekly'
                     ? 'This week (Top 50)'
-                    : v === 'emerging'
-                      ? '✨ Emerging'
-                      : 'All'}
+                    : v === 'inspiration'
+                      ? '💡 Inspiration'
+                      : v === 'emerging'
+                        ? '✨ Emerging'
+                        : 'All'}
               </button>
             ))}
           </div>

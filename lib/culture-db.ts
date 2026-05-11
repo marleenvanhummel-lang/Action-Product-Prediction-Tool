@@ -409,7 +409,7 @@ export async function finishFetchRun(args: {
 
 export interface ListTrendsArgs {
   week: string
-  view: 'daily' | 'weekly' | 'all' | 'emerging'
+  view: 'daily' | 'weekly' | 'all' | 'emerging' | 'inspiration'
   category: string | null
   country?: string | null  // ActionCountry code; null = no filter
   limit: number
@@ -446,6 +446,13 @@ export async function listTrends(args: ListTrendsArgs): Promise<TrendRowDB[]> {
     // Popularity < 7 = not mainstream. Freshness >= 7 = seen within ~7 days.
     conditions.push('popularity_score < 7')
     conditions.push('freshness_score >= 7')
+    orderBy = 'first_seen_at DESC, popularity_score DESC'
+  } else if (args.view === 'inspiration') {
+    // Format-led inspiration content — ways to MAKE content, not topics
+    // ABOUT something. Filter: contentType is format/meme/aesthetic.
+    // Sort: novelty (recent + not yet mainstream).
+    conditions.push(`content_type IN ('format','meme','aesthetic','behavior')`)
+    conditions.push('freshness_score >= 5')
     orderBy = 'first_seen_at DESC, popularity_score DESC'
   } else {
     orderBy = 'popularity_score DESC, freshness_score DESC'
