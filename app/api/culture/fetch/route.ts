@@ -1,0 +1,613 @@
+/**
+ * POST /api/culture/fetch
+ *
+ * Triggers a full Culture Radar refresh:
+ *   1. Loads active sources from `culture_sources`.
+ *   2. Scrapes each via Firecrawl (concurrency-limited).
+ *   3. For each source, asks Gemini to extract trends.
+ *   4. Merges trends across sources (multi-source = higher validation).
+ *   5. Upserts into `culture_trends` for the current ISO week.
+ *   6. Recomputes daily + weekly ranks.
+ *   7. Archives trends older than 7 days.
+ *   8. Logs the run in `culture_fetch_runs`.
+ *
+ * Body (all optional):
+ *   {
+ *     "sourceIds":     [1, 2, 3],     // subset; default = all active
+ *     "categories":    ["food"],       // filter sources by category
+ *     "maxSources":    null,           // hard cap (debugging)
+ *     "skipAi":        false,          // dry-run scrape only
+ *     "triggeredBy":   "manual",
+ *     "lookbackDays":  7               // widen window for backfill
+ *   }
+ *
+ * Returns: { runId, status, summary, failures }
+ *
+ * Storage: Neon / Vercel Postgres (via lib/culture-db.ts). No Supabase.
+ */
+
+import { NextResponse } from 'next/server'
+import FirecrawlApp from '@mendable/firecrawl-js'
+import { analyzeSourceContent } from '@/lib/culture-ai'
+import { CULTURE_GEMINI_MODEL } from '@/lib/constants'
+import { fetchGoogleTrends, type GoogleTrendItem } from '@/lib/google-trends'
+import { perplexitySearch, perplexityToMarkdown } from '@/lib/perplexity'
+import {
+  freshnessScore,
+  isoDate,
+  isoWeek,
+  mergeTrends,
+  rankingScore,
+  slugify,
+  validationScore,
+  type MergedTrend,
+} from '@/lib/culture-radar'
+import {
+  applyTrendRanks,
+  archiveStaleTrends,
+  createFetchRun,
+  findTrendForUpsert,
+  finishFetchRun,
+  insertTrend,
+  listSources,
+  loadActiveTrendsForRanking,
+  updateSourceScrapeStatus,
+  updateTrend,
+} from '@/lib/culture-db'
+import type {
+  AIIdentifiedTrend,
+  CultureCategory,
+  ScrapeResult,
+} from '@/types/culture'
+
+export const maxDuration = 300
+
+const firecrawl = new FirecrawlApp({ apiKey: process.env.FIRECRAWL_API_KEY ?? '' })
+
+const SCRAPE_CONCURRENCY = 4
+const AI_CONCURRENCY = 4
+const MAX_TRENDS_PER_SOURCE = 8
+
+// ───────────────────────────────────────────────────────────────────────────
+
+interface FetchBody {
+  sourceIds?: number[]
+  categories?: CultureCategory[]
+  maxSources?: number | null
+  skipAi?: boolean
+  triggeredBy?: string
+  /** Widen the lookback window when scraping + prompting. 0 = current only. */
+  lookbackDays?: number
+}
+
+interface SourceRow {
+  id: number
+  name: string
+  url: string
+  category: CultureCategory
+  source_type: string
+  reliability: number
+  active: boolean
+  notes?: string | null
+}
+
+export async function POST(req: Request) {
+  const body = (await req.json().catch(() => ({}))) as FetchBody
+
+  // ── 1. Load sources ─────────────────────────────────────────────────────
+  let sources: SourceRow[]
+  try {
+    const rows = await listSources({
+      activeOnly: true,
+      ids: body.sourceIds,
+      categories: body.categories,
+    })
+    sources = rows as unknown as SourceRow[]
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
+    )
+  }
+
+  if (body.maxSources) sources = sources.slice(0, body.maxSources)
+  if (sources.length === 0) {
+    return NextResponse.json({ error: 'No active sources matched filters' }, { status: 400 })
+  }
+
+  // ── 2. Create run row ───────────────────────────────────────────────────
+  let runId: string
+  try {
+    runId = await createFetchRun({
+      triggeredBy: body.triggeredBy ?? 'manual',
+      sourcesAttempted: sources.length,
+      aiModel: CULTURE_GEMINI_MODEL,
+    })
+  } catch (err) {
+    return NextResponse.json(
+      { error: `Failed to create run: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 500 },
+    )
+  }
+
+  // ── 3. Scrape (concurrency-limited) ─────────────────────────────────────
+  const lookbackDays = Math.max(0, Math.min(30, body.lookbackDays ?? 0))
+  console.log(`[culture/fetch:${runId}] start scraping ${sources.length} sources, lookback=${lookbackDays}d`)
+  const scrapeResults = await runConcurrent(sources, SCRAPE_CONCURRENCY, (s) =>
+    scrapeSource(s, lookbackDays),
+  )
+  const okScrapes = scrapeResults.filter((r) => r.ok)
+  const failedScrapes = scrapeResults.filter((r) => !r.ok)
+  console.log(`[culture/fetch:${runId}] scrape done: ${okScrapes.length} ok, ${failedScrapes.length} failed`)
+
+  // Persist last_scraped_at + status per source.
+  await Promise.all(
+    scrapeResults.map((r) =>
+      updateSourceScrapeStatus({
+        id: r.sourceId,
+        fetchedAt: r.fetchedAt,
+        status: r.ok ? 'ok' : 'error',
+        error: r.error ?? null,
+      }).catch((err) => console.error(`[culture/fetch] status update failed for ${r.sourceId}`, err)),
+    ),
+  )
+
+  // ── 4. AI analyze (skippable for dry runs) ──────────────────────────────
+  let tokensIn = 0
+  let tokensOut = 0
+  let identified: Array<AIIdentifiedTrend & { sourceId: number; sourceName: string }> = []
+
+  if (!body.skipAi && okScrapes.length > 0) {
+    const aiResults = await runConcurrent(okScrapes, AI_CONCURRENCY, async (scrape) => {
+      try {
+        const ai = await analyzeSourceContent({
+          sourceName: scrape.sourceName,
+          sourceCategory: scrape.sourceCategory,
+          sourceUrl: scrape.url,
+          contentMarkdown: scrape.textSnippet,
+          maxTrends: MAX_TRENDS_PER_SOURCE,
+          lookbackDays,
+        })
+        tokensIn += ai.tokensIn ?? 0
+        tokensOut += ai.tokensOut ?? 0
+        return ai.trends.map((t) => ({
+          ...t,
+          sourceId: scrape.sourceId,
+          sourceName: scrape.sourceName,
+        }))
+      } catch (err) {
+        console.error(`[culture/fetch] AI failed for ${scrape.sourceName}`, err)
+        return []
+      }
+    })
+    identified = aiResults.flat()
+  }
+  console.log(`[culture/fetch:${runId}] AI done: ${identified.length} raw trends identified, tokens=${tokensIn}/${tokensOut}`)
+
+  // ── 5. Merge across sources, write to DB ────────────────────────────────
+  const merged = mergeTrends(identified)
+  const week = isoWeek()
+  const today = isoDate()
+  const now = new Date()
+  console.log(`[culture/fetch:${runId}] merged → ${merged.length} unique trends, week=${week}`)
+
+  let inserted = 0
+  let updated = 0
+
+  for (const m of merged) {
+    try {
+      const result = await upsertTrend(m, week, now)
+      if (result === 'inserted') inserted++
+      else if (result === 'updated') updated++
+    } catch (err) {
+      console.error(`[culture/fetch:${runId}] upsertTrend threw for "${m.name}":`, err)
+    }
+  }
+  console.log(`[culture/fetch:${runId}] upsert done: ${inserted} inserted, ${updated} updated`)
+
+  // ── 6. Recompute daily + weekly ranks ───────────────────────────────────
+  try {
+    await recomputeRanks(week, today)
+    console.log(`[culture/fetch:${runId}] ranks recomputed`)
+  } catch (err) {
+    console.error(`[culture/fetch:${runId}] recomputeRanks threw:`, err)
+  }
+
+  // ── 7. Archive trends older than 7 days ─────────────────────────────────
+  try {
+    const cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString()
+    await archiveStaleTrends(cutoff)
+    console.log(`[culture/fetch:${runId}] stale trends archived`)
+  } catch (err) {
+    console.error(`[culture/fetch:${runId}] archiveStaleTrends threw:`, err)
+  }
+
+  // ── 8. Close out run row ────────────────────────────────────────────────
+  const status =
+    failedScrapes.length === 0
+      ? 'ok'
+      : okScrapes.length === 0
+        ? 'failed'
+        : 'partial'
+
+  console.log(`[culture/fetch:${runId}] calling finishFetchRun, status=${status}`)
+  try {
+    await finishFetchRun({
+      id: runId,
+      finishedAt: new Date().toISOString(),
+      sourcesOk: okScrapes.length,
+      sourcesFailed: failedScrapes.length,
+      trendsInserted: inserted,
+      trendsUpdated: updated,
+      status,
+      aiTokensIn: tokensIn,
+      aiTokensOut: tokensOut,
+    })
+    console.log(`[culture/fetch:${runId}] finishFetchRun OK`)
+  } catch (err) {
+    console.error(`[culture/fetch:${runId}] finishFetchRun threw:`, err)
+  }
+
+  return NextResponse.json({
+    runId,
+    status,
+    summary: {
+      sourcesAttempted: sources.length,
+      sourcesOk: okScrapes.length,
+      sourcesFailed: failedScrapes.length,
+      identifiedRaw: identified.length,
+      mergedTrends: merged.length,
+      inserted,
+      updated,
+      week,
+      tokensIn,
+      tokensOut,
+    },
+    failures: failedScrapes.map((f) => ({ source: f.sourceName, error: f.error })),
+  })
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Scraping helpers
+// ───────────────────────────────────────────────────────────────────────────
+
+async function scrapeSource(source: SourceRow, lookbackDays: number): Promise<ScrapeResult> {
+  // Dispatch on source_type:
+  //   - google_trends_api → direct API call, no Firecrawl
+  //   - perplexity_query  → ask Perplexity, use answer + citations as content
+  //   - everything else   → Firecrawl markdown scrape
+  if (source.source_type === 'google_trends_api') {
+    return scrapeGoogleTrends(source)
+  }
+  if (source.source_type === 'perplexity_query') {
+    return scrapePerplexity(source)
+  }
+
+  const scrapeUrl = widenUrlForLookback(source.url, source.source_type, lookbackDays)
+  const fetchedAt = new Date().toISOString()
+  try {
+    const result = await firecrawl.scrape(scrapeUrl, {
+      formats: ['markdown'],
+      waitFor: 3000,
+      timeout: 30_000,
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9,nl;q=0.8',
+      },
+    })
+    const markdown = (result.markdown ?? '').trim()
+    if (!markdown) {
+      return {
+        sourceId: source.id,
+        sourceName: source.name,
+        sourceCategory: source.category,
+        url: source.url,
+        ok: false,
+        fetchedAt,
+        textSnippet: '',
+        topLinks: [],
+        error: 'empty_markdown',
+      }
+    }
+    return {
+      sourceId: source.id,
+      sourceName: source.name,
+      sourceCategory: source.category,
+      url: source.url,
+      ok: true,
+      fetchedAt,
+      textSnippet: markdown.slice(0, 12_000),
+      topLinks: extractLinks(markdown).slice(0, 20),
+    }
+  } catch (err) {
+    return {
+      sourceId: source.id,
+      sourceName: source.name,
+      sourceCategory: source.category,
+      url: source.url,
+      ok: false,
+      fetchedAt,
+      textSnippet: '',
+      topLinks: [],
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
+
+/**
+ * Convert the structured Google Trends payload into a markdown-flavored
+ * "scrape result" so the rest of the pipeline (Gemini analysis, merging,
+ * upsert) doesn't have to know there's a special source.
+ *
+ * Geo defaults to NL/BE based on the URL.
+ */
+async function scrapeGoogleTrends(source: SourceRow): Promise<ScrapeResult> {
+  const fetchedAt = new Date().toISOString()
+  const geo = extractGeoFromUrl(source.url) ?? 'NL'
+  const hl = geo === 'BE' ? 'nl-BE' : 'nl-NL'
+
+  try {
+    const items = await fetchGoogleTrends({ geo, hl, maxItems: 30 })
+    if (items.length === 0) {
+      return {
+        sourceId: source.id,
+        sourceName: source.name,
+        sourceCategory: source.category,
+        url: source.url,
+        ok: false,
+        fetchedAt,
+        textSnippet: '',
+        topLinks: [],
+        error: 'no_google_trends_returned',
+      }
+    }
+    return {
+      sourceId: source.id,
+      sourceName: source.name,
+      sourceCategory: source.category,
+      url: source.url,
+      ok: true,
+      fetchedAt,
+      textSnippet: formatGoogleTrendsAsMarkdown(items, geo),
+      topLinks: items.flatMap((i) => i.articles.map((a) => a.url)).slice(0, 20),
+    }
+  } catch (err) {
+    return {
+      sourceId: source.id,
+      sourceName: source.name,
+      sourceCategory: source.category,
+      url: source.url,
+      ok: false,
+      fetchedAt,
+      textSnippet: '',
+      topLinks: [],
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
+
+/**
+ * Perplexity-based discovery: ask the web a focused question, get a
+ * synthesized answer with citations. The query lives in the source's
+ * `notes` column (set up in sources.sql); if notes is empty we fall back
+ * to a generic query.
+ */
+async function scrapePerplexity(source: SourceRow): Promise<ScrapeResult> {
+  const fetchedAt = new Date().toISOString()
+  // The "URL" for Perplexity sources is a sentinel like
+  // "internal://perplexity/dutch-memes". The actual question lives in `notes`.
+  const question =
+    source.notes?.trim() ||
+    `What specific named cultural trends are going viral on social media right now in the ${source.category} space? Give concrete named examples with sources.`
+
+  try {
+    const result = await perplexitySearch(question)
+    if (!result.ok || !result.text) {
+      return {
+        sourceId: source.id,
+        sourceName: source.name,
+        sourceCategory: source.category,
+        url: source.url,
+        ok: false,
+        fetchedAt,
+        textSnippet: '',
+        topLinks: [],
+        error: result.error ?? 'perplexity_empty',
+      }
+    }
+    return {
+      sourceId: source.id,
+      sourceName: source.name,
+      sourceCategory: source.category,
+      url: source.url,
+      ok: true,
+      fetchedAt,
+      textSnippet: perplexityToMarkdown(result),
+      topLinks: result.citations.slice(0, 20),
+    }
+  } catch (err) {
+    return {
+      sourceId: source.id,
+      sourceName: source.name,
+      sourceCategory: source.category,
+      url: source.url,
+      ok: false,
+      fetchedAt,
+      textSnippet: '',
+      topLinks: [],
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
+
+/**
+ * Best-effort widen of a source URL when we're doing a multi-day lookback.
+ *
+ * - Reddit .json: append ?t=week so the listing covers a 7-day window
+ *   instead of just "hot right now".
+ * - Everything else: returned as-is (most blogs always show the latest;
+ *   the AI prompt is responsible for the time-window framing).
+ */
+function widenUrlForLookback(url: string, sourceType: string, lookbackDays: number): string {
+  if (lookbackDays <= 0) return url
+  if (sourceType === 'reddit' && url.includes('.json')) {
+    const sep = url.includes('?') ? '&' : '?'
+    return `${url}${sep}t=week`
+  }
+  return url
+}
+
+function extractGeoFromUrl(url: string): string | null {
+  const m = /geo=([A-Z]{2})/i.exec(url)
+  return m ? m[1].toUpperCase() : null
+}
+
+function formatGoogleTrendsAsMarkdown(items: GoogleTrendItem[], geo: string): string {
+  const lines: string[] = []
+  lines.push(`# Google Trends — daily trending searches (${geo})`)
+  lines.push(`Fetched: ${new Date().toISOString()}`)
+  lines.push('')
+  for (const [i, item] of items.entries()) {
+    lines.push(`## ${i + 1}. ${item.title}`)
+    if (item.traffic) lines.push(`Traffic: ${item.traffic}`)
+    if (item.relatedQueries.length > 0) {
+      lines.push(`Related: ${item.relatedQueries.join(', ')}`)
+    }
+    for (const a of item.articles.slice(0, 3)) {
+      lines.push(`- ${a.title}${a.source ? ` (${a.source})` : ''} — ${a.url}`)
+    }
+    lines.push('')
+  }
+  return lines.join('\n').slice(0, 12_000)
+}
+
+function extractLinks(markdown: string): string[] {
+  const re = /\]\((https?:\/\/[^)\s]+)\)/g
+  const out: string[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(markdown)) !== null) out.push(m[1])
+  return Array.from(new Set(out))
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Trend upsert
+// ───────────────────────────────────────────────────────────────────────────
+
+async function upsertTrend(
+  m: MergedTrend,
+  week: string,
+  now: Date,
+): Promise<'inserted' | 'updated' | 'noop'> {
+  const slug = slugify(m.name)
+  if (!slug) return 'noop'
+
+  const existing = await findTrendForUpsert(slug, week)
+  const firstSeen = existing?.first_seen_at ? new Date(existing.first_seen_at) : now
+  const fresh = freshnessScore(firstSeen, now)
+
+  if (existing) {
+    const mergedSources = unionInts(existing.source_ids ?? [], m.sourceIds)
+    const mergedHashtags = unionStrings(existing.hashtags ?? [], m.hashtags)
+    const mergedExamples = unionStrings(existing.example_urls ?? [], m.exampleUrls)
+    const newPopularity = Math.max(existing.popularity_score ?? 0, m.popularityScore)
+
+    const ok = await updateTrend({
+      id: existing.id,
+      name: m.name,
+      description: m.description,
+      category: m.category,
+      contentType: m.contentType,
+      hashtags: mergedHashtags,
+      exampleUrls: mergedExamples,
+      popularityScore: newPopularity,
+      freshnessScore: fresh,
+      validationScore: validationScore(mergedSources),
+      reasoning: m.reasoning,
+      sourceIds: mergedSources,
+      sourceNames: m.sourceNames,
+      estimatedViews: m.estimatedViews,
+      now: now.toISOString(),
+    })
+    return ok ? 'updated' : 'noop'
+  }
+
+  const ok = await insertTrend({
+    name: m.name,
+    slug,
+    description: m.description,
+    category: m.category,
+    contentType: m.contentType,
+    hashtags: m.hashtags,
+    exampleUrls: m.exampleUrls,
+    popularityScore: m.popularityScore,
+    freshnessScore: fresh,
+    validationScore: validationScore(m.sourceIds),
+    reasoning: m.reasoning,
+    sourceIds: m.sourceIds,
+    sourceNames: m.sourceNames,
+    estimatedViews: m.estimatedViews,
+    rankWeek: week,
+    firstSeenAt: now.toISOString(),
+  })
+  return ok ? 'inserted' : 'noop'
+}
+
+/**
+ * Pull all active trends for the given week, compute ranking score, then
+ * write daily_rank (top 10 today) and weekly_rank (top 50 this week).
+ *
+ * Done in app code rather than SQL so we can iterate on the scoring formula
+ * without migrations.
+ */
+async function recomputeRanks(week: string, today: string): Promise<void> {
+  const rows = await loadActiveTrendsForRanking(week)
+  const ranked = rows
+    .map((t) => ({
+      id: t.id,
+      score: rankingScore({
+        popularity: Number(t.popularity_score) || 0,
+        freshness: Number(t.freshness_score) || 0,
+        validation: Number(t.validation_score) || 0,
+      }),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .map((r, i) => ({
+      id: r.id,
+      dailyRank: i < 10 ? i + 1 : null,
+      weeklyRank: i < 50 ? i + 1 : null,
+    }))
+
+  await applyTrendRanks(ranked, today)
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Misc
+// ───────────────────────────────────────────────────────────────────────────
+
+function unionInts(a: number[], b: number[]): number[] {
+  return Array.from(new Set([...(a ?? []), ...(b ?? [])]))
+}
+
+function unionStrings(a: string[], b: string[]): string[] {
+  return Array.from(new Set([...(a ?? []), ...(b ?? [])]))
+}
+
+async function runConcurrent<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const i = cursor++
+      if (i >= items.length) return
+      results[i] = await fn(items[i])
+    }
+  })
+  await Promise.all(workers)
+  return results
+}

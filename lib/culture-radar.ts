@@ -1,0 +1,193 @@
+/**
+ * Culture Radar — shared helpers.
+ *
+ * Pure functions, no I/O. Used by the fetch + trends API routes.
+ */
+
+import type { AIIdentifiedTrend, CultureCategory } from '@/types/culture'
+
+// ───────────────────────────────────────────────────────────────────────────
+// Identity / dedup
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Slug strips diacritics, lowercases, collapses non-alphanumerics.
+ * Two trends with the same slug are treated as the same trend.
+ */
+export function slugify(name: string): string {
+  return name
+    .normalize('NFD')
+    // strip combining diacritical marks
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Time helpers
+// ───────────────────────────────────────────────────────────────────────────
+
+/** ISO week string, e.g. "2026-W19" */
+export function isoWeek(date: Date = new Date()): string {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+  const day = d.getUTCDay() || 7
+  d.setUTCDate(d.getUTCDate() + 4 - day)
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  const week = Math.ceil(((d.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7)
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2, '0')}`
+}
+
+/** YYYY-MM-DD in UTC */
+export function isoDate(date: Date = new Date()): string {
+  return date.toISOString().slice(0, 10)
+}
+
+/** Days between two dates (rounded down). */
+export function daysBetween(from: Date, to: Date): number {
+  return Math.floor((to.getTime() - from.getTime()) / 86_400_000)
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Scoring
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Freshness: 10 when first seen this week, decaying linearly to 0 over 7 days.
+ * After 7 days the trend should be archived (not displayed by default).
+ */
+export function freshnessScore(firstSeenAt: Date, now: Date = new Date()): number {
+  const days = daysBetween(firstSeenAt, now)
+  if (days <= 0) return 10
+  if (days >= 7) return 0
+  return Number((10 - (10 * days) / 7).toFixed(2))
+}
+
+/**
+ * Validation: number of distinct source IDs that confirmed the trend, capped.
+ * 1 source = 1, 2 = 2, ... up to 5.
+ */
+export function validationScore(sourceIds: number[]): number {
+  return Math.min(5, new Set(sourceIds).size)
+}
+
+/**
+ * Final ranking score used for daily/weekly top lists.
+ *
+ *   0.5 * popularity (0-10)
+ * + 0.3 * freshness  (0-10)
+ * + 0.2 * (validation * 2)  // map 1-5 to 2-10
+ *
+ * Output is in [0, 10].
+ */
+export function rankingScore(args: {
+  popularity: number
+  freshness: number
+  validation: number
+}): number {
+  const { popularity, freshness, validation } = args
+  return (
+    0.5 * clamp(popularity, 0, 10) +
+    0.3 * clamp(freshness, 0, 10) +
+    0.2 * clamp(validation * 2, 0, 10)
+  )
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n))
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Merging — combine AI-identified trends across sources
+// ───────────────────────────────────────────────────────────────────────────
+
+export interface MergedTrend {
+  slug: string
+  name: string
+  description: string
+  category: CultureCategory
+  contentType: string
+  hashtags: string[]
+  popularityScore: number
+  reasoning: string
+  estimatedViews: string | null
+  exampleUrls: string[]
+  sourceIds: number[]
+  sourceNames: string[]
+}
+
+/**
+ * Merge a list of AI-identified trends (each tagged with the source they
+ * came from) into a deduplicated list. Duplicates picked up across sources
+ * get their hashtags / example URLs unioned and their source list extended.
+ *
+ * The "primary" record (description, reasoning, popularity) is taken from
+ * the highest-popularity entry — the strongest signal wins.
+ */
+export function mergeTrends(
+  identified: Array<AIIdentifiedTrend & { sourceId: number; sourceName: string }>,
+): MergedTrend[] {
+  const bySlug = new Map<string, MergedTrend>()
+
+  for (const t of identified) {
+    const slug = slugify(t.name)
+    if (!slug) continue
+    const existing = bySlug.get(slug)
+
+    if (!existing) {
+      bySlug.set(slug, {
+        slug,
+        name: t.name,
+        description: t.description,
+        category: t.category,
+        contentType: t.contentType,
+        hashtags: [...new Set(t.hashtags ?? [])],
+        popularityScore: t.popularityScore,
+        reasoning: t.reasoning,
+        estimatedViews: t.estimatedViews ?? null,
+        exampleUrls: [...new Set(t.exampleUrls ?? [])],
+        sourceIds: [t.sourceId],
+        sourceNames: [t.sourceName],
+      })
+      continue
+    }
+
+    existing.sourceIds = Array.from(new Set([...existing.sourceIds, t.sourceId]))
+    existing.sourceNames = Array.from(new Set([...existing.sourceNames, t.sourceName]))
+    existing.hashtags = Array.from(new Set([...existing.hashtags, ...(t.hashtags ?? [])]))
+    existing.exampleUrls = Array.from(
+      new Set([...existing.exampleUrls, ...(t.exampleUrls ?? [])]),
+    )
+    if (t.popularityScore > existing.popularityScore) {
+      existing.description = t.description
+      existing.popularityScore = t.popularityScore
+      existing.reasoning = t.reasoning
+      if (t.estimatedViews) existing.estimatedViews = t.estimatedViews
+    }
+  }
+
+  return Array.from(bySlug.values())
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// AI output parsing — extract JSON even when wrapped in code fences
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Models love to wrap JSON in ```json ... ``` even when told not to.
+ * Strip fences, find the outermost {...}, parse. Returns null on failure.
+ */
+export function extractJson<T = unknown>(text: string): T | null {
+  const stripped = text
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .trim()
+  const start = stripped.indexOf('{')
+  const end = stripped.lastIndexOf('}')
+  if (start < 0 || end <= start) return null
+  try {
+    return JSON.parse(stripped.slice(start, end + 1)) as T
+  } catch {
+    return null
+  }
+}

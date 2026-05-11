@@ -7,6 +7,8 @@ const RATE_LIMITS: Record<string, number> = {
   '/api/copy-check': 10,
   '/api/scan': 800,
   '/api/trends': 5,
+  '/api/culture/fetch': 2,
+  '/api/culture': 30,
   '/api/price-lookup': 20,
   '/api/brand-guidelines': 10,
 }

@@ -5,6 +5,14 @@ export const MAX_FILES = 700
 export const MAX_FILE_SIZE_MB = 20
 export const SCRAPER_TIMEOUT_MS = 8000
 export const GEMINI_MODEL = 'gemini-2.5-flash'
+
+// Culture Radar uses Flash by default — fast + cheap enough for the per-source
+// extraction step, which is mostly structured tagging rather than deep reasoning.
+// Override with CULTURE_GEMINI_MODEL=gemini-2.5-pro for higher-quality output
+// (3-5x slower, may exceed Vercel serverless 300s limit on full backfills).
+export const CULTURE_GEMINI_MODEL =
+  process.env.CULTURE_GEMINI_MODEL ?? 'gemini-2.5-flash'
+
 export const SESSION_POLL_INTERVAL_MS = 500
 
 export const ACTION_BRAND = {

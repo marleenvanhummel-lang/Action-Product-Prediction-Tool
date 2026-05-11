@@ -56,6 +56,19 @@ const tools = [
     ),
   },
   {
+    href: '/culture-radar',
+    label: 'Culture Radar',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <circle cx="12" cy="12" r="6"/>
+        <circle cx="12" cy="12" r="2"/>
+        <line x1="12" y1="2" x2="12" y2="6"/>
+        <line x1="12" y1="18" x2="12" y2="22"/>
+      </svg>
+    ),
+  },
+  {
     href: '/audio-checker',
     label: 'Audio Checker',
     icon: (
