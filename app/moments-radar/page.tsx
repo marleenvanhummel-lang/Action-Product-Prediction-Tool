@@ -198,7 +198,7 @@ export default function MomentsRadarPage() {
   return (
     <div className="min-h-screen">
       {/* Header */}
-      <div className="border-b border-gray-200 bg-white px-8 py-5">
+      <div className="border-b border-gray-200 bg-white px-8 py-5" style={{ paddingRight: 240 }}>
         <div className="flex items-center justify-between">
           <div>
             <h1

@@ -235,7 +235,6 @@ export default function CultureRadarPage() {
   }
 
   const handleRefresh = () => runFetch(0, 'manual-ui')
-  const handleBackfill = () => runFetch(7, 'backfill-7d-ui')
 
   const openModal = () => {
     setForm(blankForm())
@@ -295,7 +294,7 @@ export default function CultureRadarPage() {
   return (
     <div className="min-h-screen">
       {/* ── Header ── */}
-      <div className="border-b border-gray-200 bg-white px-8 py-5">
+      <div className="border-b border-gray-200 bg-white px-8 py-5" style={{ paddingRight: 240 }}>
         <div className="flex items-center justify-between">
           <div>
             <h1
@@ -344,20 +343,6 @@ export default function CultureRadarPage() {
               Report trend
             </button>
 
-            <button
-              onClick={handleBackfill}
-              disabled={refreshing}
-              title="One-time backfill — pulls trends from the last 7 days. Higher credit cost."
-              className="px-3 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50 border"
-              style={{
-                fontFamily: 'var(--font-body)',
-                borderColor: 'var(--action-red)',
-                color: 'var(--action-red)',
-                backgroundColor: '#ffffff',
-              }}
-            >
-              {refreshing ? '…' : 'Backfill 7d'}
-            </button>
             <button
               onClick={handleRefresh}
               disabled={refreshing}
