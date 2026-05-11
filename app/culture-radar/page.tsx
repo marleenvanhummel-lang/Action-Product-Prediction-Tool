@@ -209,7 +209,20 @@ export default function CultureRadarPage() {
             /* best-effort */
           }
         }
-        setRefreshStage(`Generated ${totalBriefed} Action briefs.`)
+        setRefreshStage(`Generated ${totalBriefed} Action briefs. Verifying URLs…`)
+
+        // Verify TikTok / IG / YouTube URLs and drop hallucinations
+        try {
+          await apiFetch('/api/culture/verify-urls', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ limit: 30 }),
+          })
+        } catch {
+          /* best-effort */
+        }
+
+        setRefreshStage(`Done. ${totalBriefed} briefs + URLs verified.`)
         await loadTrends()
       }
     } catch (e) {

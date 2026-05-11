@@ -19,6 +19,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { POST as fetchHandler } from '@/app/api/culture/fetch/route'
 import { POST as backfillBriefsHandler } from '@/app/api/culture/backfill-briefs/route'
+import { POST as verifyUrlsHandler } from '@/app/api/culture/verify-urls/route'
 import { POST as momentsFetchHandler } from '@/app/api/moments/fetch/route'
 import { POST as momentsBriefsHandler } from '@/app/api/moments/backfill-briefs/route'
 import { POST as momentsEnrichHandler } from '@/app/api/moments/enrich-topics/route'
@@ -157,6 +158,33 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Step 3: URL verification (drop hallucinated TikTok URLs) ──────────
+  // Best-effort. We process the most-recent 30 trends — anything older has
+  // already been verified by a previous cron run.
+  let urlsKept = 0
+  let urlsDropped = 0
+  if (!fetchError) {
+    try {
+      const verifyReq = new NextRequest(new URL('http://internal/api/culture/verify-urls'), {
+        method: 'POST',
+        headers: {
+          authorization: expectedBearer,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ limit: 30 }),
+      })
+      const res = await verifyUrlsHandler(verifyReq)
+      const data = (await res.json()) as {
+        videoUrlsKept?: number
+        videoUrlsDropped?: number
+      }
+      urlsKept = data.videoUrlsKept ?? 0
+      urlsDropped = data.videoUrlsDropped ?? 0
+    } catch {
+      /* best-effort */
+    }
+  }
+
   return NextResponse.json({
     ok: !fetchError,
     durationMs: Date.now() - started,
@@ -164,6 +192,8 @@ export async function GET(req: NextRequest) {
     fetchSummary,
     briefsBriefed,
     briefsFailed,
+    urlsKept,
+    urlsDropped,
     isMonthStart,
     momentsError,
     momentsSummary,
