@@ -158,6 +158,11 @@ function normalizeTrend(
     typeof raw.description === 'string' ? raw.description.trim() : ''
   if (!description) return null
 
+  // Reject generic, non-specific "trends" that are really just categories.
+  if (isGenericTrendName(name) || isGenericDescription(description)) {
+    return null
+  }
+
   const category = isCategory(raw.category) ? raw.category : fallbackCategory
   const contentType = isContentType(raw.contentType) ? raw.contentType : 'format'
 
@@ -203,4 +208,123 @@ function isContentType(v: unknown): v is AIIdentifiedTrend['contentType'] {
 
 function clampInt(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, Math.round(n)))
+}
+
+// ── Generic trend filter ────────────────────────────────────────────────────
+//
+// Even with the "demand specificity" prompt, Gemini occasionally extracts
+// category-level labels like "Viral TikTok Sounds" or "Beauty Trends".
+// These are useless — they describe a platform, not a trend. We reject
+// them here before they hit the DB.
+
+const GENERIC_NAME_PREFIXES = [
+  'viral',
+  'trending',
+  'popular',
+  'top ',
+  'latest',
+  'rising',
+  'emerging',
+  'best',
+  'biggest',
+  'most',
+  'new',
+  'hot',
+  'recent',
+]
+
+// Names that are JUST a generic noun (no specific identifier).
+const GENERIC_NOUN_NAMES = new Set([
+  'sounds',
+  'audio',
+  'music',
+  'songs',
+  'memes',
+  'trends',
+  'content',
+  'posts',
+  'videos',
+  'reels',
+  'shorts',
+  'aesthetics',
+  'formats',
+  'challenges',
+  'dances',
+  'hashtags',
+])
+
+function isGenericTrendName(name: string): boolean {
+  const norm = name.toLowerCase().trim()
+  if (!norm) return true
+
+  // Reject if name starts with a vague modifier and contains a category word.
+  for (const prefix of GENERIC_NAME_PREFIXES) {
+    if (norm.startsWith(prefix + ' ') || norm === prefix.trim()) {
+      const rest = norm.slice(prefix.length).trim()
+      // "viral tiktok sounds" → rest = "tiktok sounds" → both are platform/noun
+      // "trending memes" → rest = "memes" → generic noun
+      const words = rest.split(/\s+/).filter(Boolean)
+      const lastWord = words[words.length - 1] ?? ''
+      if (GENERIC_NOUN_NAMES.has(lastWord)) return true
+      // Just "viral memes" / "viral sounds" / "viral songs"
+      if (words.length <= 2 && words.every((w) => GENERIC_NOUN_NAMES.has(w) || PLATFORM_WORDS.has(w))) {
+        return true
+      }
+    }
+  }
+
+  // Bare generic noun: "Memes", "Trends", "Sounds"
+  const words = norm.split(/\s+/).filter(Boolean)
+  if (words.length === 1 && GENERIC_NOUN_NAMES.has(words[0])) return true
+
+  // Two-word names where both are platform/generic: "TikTok Memes", "Reels Trends"
+  if (words.length === 2 && words.every((w) => GENERIC_NOUN_NAMES.has(w) || PLATFORM_WORDS.has(w))) {
+    return true
+  }
+
+  return false
+}
+
+const PLATFORM_WORDS = new Set([
+  'tiktok',
+  'instagram',
+  'reels',
+  'shorts',
+  'youtube',
+  'twitter',
+  'x',
+  'threads',
+  'pinterest',
+  'snapchat',
+  'social',
+  'media',
+])
+
+// Descriptions that just define a category instead of describing a trend.
+// We flag them by looking for telltale "definitional" phrasing combined with
+// no specific named entities (no quoted strings, no hashtags, no creator names).
+function isGenericDescription(desc: string): boolean {
+  const norm = desc.toLowerCase()
+  const definitionalPhrases = [
+    'audio clips and music tracks',
+    'content that gains popularity',
+    'driving engagement and content creation',
+    'primary driver of social media',
+    'widespread popularity on social media',
+    'a category of',
+    'a type of content',
+    'general trend of',
+  ]
+  const looksDefinitional = definitionalPhrases.some((p) => norm.includes(p))
+  if (!looksDefinitional) return false
+
+  // If it has any hashtag or quoted string or '@' mention, it has at least
+  // one specific anchor — let it through.
+  const hasAnchor =
+    /["“][^"”]{2,}["”]/.test(desc) ||
+    /#\w{3,}/.test(desc) ||
+    /@\w{3,}/.test(desc) ||
+    // Title-cased multi-word name (e.g. "Charli XCX", "Rebecca Black")
+    /\b[A-Z][a-z]+\s+[A-Z][a-z]+/.test(desc)
+  return !hasAnchor
 }
