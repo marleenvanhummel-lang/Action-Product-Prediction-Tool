@@ -111,7 +111,7 @@ RULE 3: DO NOT extract generic product categories. A specific named product (e.g
 - popularityScore: integer 1-10, signal strength in THIS source
 - reasoning: 1 sentence with a concrete signal (view count, post volume, rank position)
 - estimatedViews: human-readable if available (e.g. "2.3M posts", "#3 trending NL", "59K posts/7d")
-- exampleUrls: URLs from the content linking to examples
+- exampleUrls: PRIORITIZE direct video URLs (tiktok.com, instagram.com/reel, youtube.com/shorts, youtu.be). Pull them from the content if present. Blog/news article URLs only if no direct video link is available. The team wants to WATCH the trend, not read about it.
 
 # OUTPUT
 Valid JSON only, no markdown fences:

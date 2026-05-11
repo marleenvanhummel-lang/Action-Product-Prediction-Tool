@@ -23,7 +23,31 @@ export interface PerplexityResult {
   ok: boolean
   text: string                   // synthesized answer body (markdown)
   citations: string[]            // URLs Perplexity used as sources
+  videoUrls?: string[]           // Direct TikTok / IG / YouTube URLs found in the answer
   error?: string
+}
+
+/**
+ * Pull direct video-platform URLs out of arbitrary text. These are the
+ * highest-value links for the Culture Radar dashboard — they let the team
+ * watch the actual viral example, not a news article about it.
+ */
+export function extractVideoUrls(text: string): string[] {
+  const patterns = [
+    /https?:\/\/(?:www\.|vm\.|m\.)?tiktok\.com\/[^\s)<>"']+/gi,
+    /https?:\/\/(?:www\.)?instagram\.com\/(?:p|reel|reels)\/[^\s)<>"']+/gi,
+    /https?:\/\/(?:www\.|m\.)?youtube\.com\/(?:watch|shorts)[^\s)<>"']*/gi,
+    /https?:\/\/youtu\.be\/[^\s)<>"']+/gi,
+  ]
+  const urls = new Set<string>()
+  for (const re of patterns) {
+    const matches = text.match(re) ?? []
+    for (const m of matches) {
+      // Strip trailing punctuation that often gets caught
+      urls.add(m.replace(/[).,!?;:]+$/, ''))
+    }
+  }
+  return Array.from(urls)
 }
 
 /**
@@ -45,6 +69,12 @@ You are a cultural intelligence researcher. When asked about trends, name
 specific named examples (creators, sounds, formats, aesthetics, hashtags)
 and cite real sources. Be precise. Do not give generic category overviews.
 If you cannot find specific named examples, say so.
+
+CRITICAL: Whenever you reference a specific TikTok, Instagram Reel, or
+YouTube video, include the direct URL inline (tiktok.com/@user/video/...,
+instagram.com/reel/..., youtu.be/...). These direct video links matter
+more than blog citations — the team needs to see the actual examples,
+not articles about them.
 `.trim()
 
   try {
@@ -81,6 +111,8 @@ If you cannot find specific named examples, say so.
 
     const text = data.choices?.[0]?.message?.content ?? ''
     const citations = Array.isArray(data.citations) ? data.citations : []
+    // Also surface any direct video URLs found in the answer body.
+    const videoUrls = extractVideoUrls(text + ' ' + citations.join(' '))
 
     // Detect "I can't / I don't have access" non-answers. Perplexity's
     // sonar model occasionally refuses with no citations when its web
@@ -114,6 +146,7 @@ If you cannot find specific named examples, say so.
       ok: true,
       text,
       citations,
+      videoUrls,
     }
   } catch (err) {
     return {

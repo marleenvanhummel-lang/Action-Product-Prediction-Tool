@@ -858,7 +858,7 @@ function TrendRow({ trend, view }: { trend: CultureTrend; view: View }) {
           {trend.hashtags.length > 0 && (
             <p className="text-xs text-gray-500 mt-1.5">{trend.hashtags.slice(0, 8).join(' ')}</p>
           )}
-          <div className="flex items-center gap-3 mt-1">
+          <div className="space-y-1 mt-1">
             {trend.sourceNames.length > 0 && (
               <p className="text-xs text-gray-400">
                 {trend.sourceNames.join(', ')}
@@ -866,14 +866,13 @@ function TrendRow({ trend, view }: { trend: CultureTrend; view: View }) {
               </p>
             )}
             {trend.exampleUrls.length > 0 && (
-              <a
-                href={trend.exampleUrls[0]}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-blue-500 hover:underline"
-              >
-                View reference
-              </a>
+              <div className="flex flex-wrap gap-1">
+                {sortExampleUrls(trend.exampleUrls)
+                  .slice(0, 5)
+                  .map((url, i) => (
+                    <ExampleLink key={`${url}-${i}`} url={url} />
+                  ))}
+              </div>
             )}
           </div>
         </div>
@@ -957,6 +956,105 @@ function TrendRow({ trend, view }: { trend: CultureTrend; view: View }) {
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * Classify a URL into a known platform and return display metadata.
+ * Direct video platforms get distinct colours so the team can spot them
+ * at a glance — those are the "watch the trend" links.
+ */
+function classifyUrl(url: string): {
+  platform: string
+  label: string
+  bg: string
+  fg: string
+  border: string
+  priority: number
+} {
+  const lower = url.toLowerCase()
+  if (lower.includes('tiktok.com')) {
+    return {
+      platform: 'tiktok',
+      label: '▶ TikTok',
+      bg: '#000000',
+      fg: '#ffffff',
+      border: '#000000',
+      priority: 1,
+    }
+  }
+  if (lower.includes('instagram.com')) {
+    return {
+      platform: 'instagram',
+      label: '◯ Reel',
+      bg: 'linear-gradient(135deg, #fce4ec 0%, #ffe0b2 100%)',
+      fg: '#c2185b',
+      border: '#f8bbd0',
+      priority: 2,
+    }
+  }
+  if (lower.includes('youtube.com') || lower.includes('youtu.be')) {
+    return {
+      platform: 'youtube',
+      label: '▶ YouTube',
+      bg: '#fef2f2',
+      fg: '#b91c1c',
+      border: '#fecaca',
+      priority: 3,
+    }
+  }
+  if (lower.includes('reddit.com')) {
+    return {
+      platform: 'reddit',
+      label: 'Reddit',
+      bg: '#fff7ed',
+      fg: '#c2410c',
+      border: '#fed7aa',
+      priority: 5,
+    }
+  }
+  if (lower.includes('pinterest.com')) {
+    return {
+      platform: 'pinterest',
+      label: 'Pinterest',
+      bg: '#fef2f2',
+      fg: '#b91c1c',
+      border: '#fecaca',
+      priority: 4,
+    }
+  }
+  return {
+    platform: 'article',
+    label: 'Article',
+    bg: '#f3f4f6',
+    fg: '#4a4f5c',
+    border: '#e5e7eb',
+    priority: 9,
+  }
+}
+
+/** Sort example URLs by platform priority — video platforms first. */
+function sortExampleUrls(urls: string[]): string[] {
+  return [...urls].sort((a, b) => classifyUrl(a).priority - classifyUrl(b).priority)
+}
+
+function ExampleLink({ url }: { url: string }) {
+  const c = classifyUrl(url)
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="text-[11px] px-2 py-0.5 rounded font-medium hover:opacity-80 transition-opacity inline-block"
+      style={{
+        background: c.bg,
+        color: c.fg,
+        border: `1px solid ${c.border}`,
+      }}
+      title={url}
+    >
+      {c.label}
+    </a>
   )
 }
 
