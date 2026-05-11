@@ -84,6 +84,7 @@ export async function POST(req: NextRequest) {
             country_dates, next_occurrence::TEXT AS next_occurrence,
             recurring, status
        FROM culture_moments
+      WHERE status <> 'archived'
        LIMIT $1`,
     [limit],
   )) as MomentRow[]
