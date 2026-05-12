@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import type { CultureSource, CultureTrend } from '@/types/culture'
 import { styleFor, LIFECYCLE_VISUAL } from './category-style'
-import { HeroTrend, FeaturedTrend, CompactTrend } from './trend-cards'
+import { HeroTrend, CompactTrend } from './trend-cards'
 
 type View = 'daily' | 'weekly' | 'all' | 'emerging' | 'inspiration'
 
@@ -580,17 +580,15 @@ export default function CultureRadarPage() {
             )
           }
           const hero = bundledTrends.find((t) => t.dailyRank === 1)
-          const featured = bundledTrends.filter((t) => t.dailyRank === 2 || t.dailyRank === 3)
-          const rest = bundledTrends.filter((t) => (t.dailyRank ?? 999) > 3)
+          // Everything except the #1 hero falls into the compact list,
+          // grouped by category. The old Featured 2-up tier created an
+          // awkward in-between size that didn't scale (often only one
+          // featured trend survived bundling, making it full-width).
+          const rest = bundledTrends.filter((t) => (t.dailyRank ?? 999) > 1)
           const restGrouped = groupByCategory(rest)
           return (
             <>
               {hero && <HeroTrend trend={hero} />}
-              {featured.length > 0 && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16, marginBottom: 24 }}>
-                  {featured.map((t) => <FeaturedTrend key={t.id} trend={t} />)}
-                </div>
-              )}
               <div>
                 {restGrouped.map(({ category: cat, items }) => (
                   <div key={cat} style={{ marginBottom: 24 }}>
