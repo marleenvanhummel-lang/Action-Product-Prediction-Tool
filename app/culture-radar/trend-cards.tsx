@@ -196,7 +196,24 @@ export function HeroTrend({ trend }: { trend: TrendWithVariants }) {
   if (state === 'archived') return null
 
   return (
-    <article className="jai-card jai-card-hover" style={{ marginBottom: 32, overflow: 'hidden' }}>
+    <article className="jai-card jai-card-hover" style={{ marginBottom: 32, overflow: 'hidden', position: 'relative' }}>
+      {/* Always-visible expand/collapse toggle, anchored to the card */}
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        title={expanded ? 'Collapse' : 'Expand'}
+        style={{
+          position: 'absolute', top: 12, right: 12, zIndex: 5,
+          background: '#000', color: '#FFFDF3', border: 'none',
+          padding: '6px 12px', cursor: 'pointer',
+          fontFamily: 'var(--font-jai-display)', fontSize: 10, letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          display: 'flex', alignItems: 'center', gap: 6,
+        }}
+        aria-label={expanded ? 'Collapse' : 'Expand'}
+      >
+        <span style={{ fontSize: 14, lineHeight: 1 }}>{expanded ? '−' : '+'}</span>
+        {expanded ? 'Collapse' : 'Expand'}
+      </button>
       <div style={{ position: 'relative' }}>
         <TrendVisual trend={trend} size="hero" />
         {/* Gradient overlay + headline if real thumbnail */}
@@ -228,26 +245,11 @@ export function HeroTrend({ trend }: { trend: TrendWithVariants }) {
         )}
         {/* Rank badge if SVG poster (visible regardless of overlay) */}
         {!trend.thumbnailUrl && (
-          <div style={{ position: 'absolute', top: 12, right: 12, background: '#FF1300', color: '#FFFDF3', padding: '4px 10px', fontFamily: 'var(--font-jai-display)', fontSize: 11, letterSpacing: '0.15em' }}>
+          <div style={{ position: 'absolute', top: 12, left: 12, background: '#FF1300', color: '#FFFDF3', padding: '4px 10px', fontFamily: 'var(--font-jai-display)', fontSize: 11, letterSpacing: '0.15em' }}>
             #1 TODAY
           </div>
         )}
         <StackedVariants variants={trend.bundleVariants} />
-        {/* Collapse toggle */}
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          title={expanded ? 'Collapse' : 'Expand'}
-          style={{
-            position: 'absolute', bottom: 8, right: 12,
-            background: '#FFFDF3', color: '#000', border: '1px solid #00000020',
-            width: 28, height: 28, cursor: 'pointer',
-            fontFamily: 'var(--font-jai-display)', fontSize: 14, lineHeight: 1,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-          aria-label={expanded ? 'Collapse' : 'Expand'}
-        >
-          {expanded ? '−' : '+'}
-        </button>
       </div>
 
       {/* Headline block — shown below the visual when no real thumbnail
@@ -367,7 +369,23 @@ export function FeaturedTrend({ trend }: { trend: TrendWithVariants }) {
   if (state === 'archived') return null
 
   return (
-    <article className="jai-card jai-card-hover" style={{ overflow: 'hidden' }}>
+    <article className="jai-card jai-card-hover" style={{ overflow: 'hidden', position: 'relative' }}>
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        title={expanded ? 'Collapse' : 'Expand'}
+        style={{
+          position: 'absolute', top: 10, right: 10, zIndex: 5,
+          background: '#000', color: '#FFFDF3', border: 'none',
+          padding: '5px 10px', cursor: 'pointer',
+          fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.12em',
+          textTransform: 'uppercase',
+          display: 'flex', alignItems: 'center', gap: 5,
+        }}
+        aria-label={expanded ? 'Collapse' : 'Expand'}
+      >
+        <span style={{ fontSize: 12, lineHeight: 1 }}>{expanded ? '−' : '+'}</span>
+        {expanded ? 'Close' : 'Open'}
+      </button>
       <div style={{ position: 'relative' }}>
         <TrendVisual trend={trend} size="medium" />
         <div style={{ position: 'absolute', top: 10, left: 10, display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -377,20 +395,6 @@ export function FeaturedTrend({ trend }: { trend: TrendWithVariants }) {
           <MomentumPill trend={trend} />
         </div>
         <StackedVariants variants={trend.bundleVariants} />
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          title={expanded ? 'Collapse' : 'Expand'}
-          style={{
-            position: 'absolute', top: 8, right: 8,
-            background: '#FFFDF3', color: '#000', border: '1px solid #00000020',
-            width: 28, height: 28, cursor: 'pointer',
-            fontFamily: 'var(--font-jai-display)', fontSize: 13, lineHeight: 1,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-          aria-label={expanded ? 'Collapse' : 'Expand'}
-        >
-          {expanded ? '−' : '+'}
-        </button>
       </div>
       <div style={{ padding: 18 }}>
         <p className="jai-mono-label" style={{ color: '#FF1300', margin: 0 }}>{trend.category}</p>
