@@ -694,11 +694,11 @@ function MindmapGraph({ mindmap, centerLabel }: {
   const nonEmpty = branches.filter((b) => (mindmap[b.key] ?? []).length > 0)
   if (nonEmpty.length === 0) return null
 
-  const W = 880
-  const H = 380
+  const W = 980
+  const H = 460
   const cx = W / 2
   const cy = H / 2
-  const radius = 140
+  const radius = 170
 
   // Position 6 branches around the center (top, top-right, bottom-right, bottom, bottom-left, top-left)
   const angles = [-90, -30, 30, 90, 150, 210]
@@ -733,78 +733,85 @@ function MindmapGraph({ mindmap, centerLabel }: {
             ))}
           </text>
         </g>
-        {/* Branch nodes */}
+        {/* Branch nodes — use foreignObject so text wraps naturally */}
         {positions.map((p) => {
           const items = mindmap[p.key] ?? []
           const first = items[0]
-          const tw = 200
-          const th = 78
+          const tw = 240
+          const th = 110
           const rx = p.side === 'left' ? p.x - tw : p.side === 'right' ? p.x : p.x - tw / 2
           const ry = p.y - th / 2
           return (
             <g key={`node-${p.key}`}>
               <rect x={rx} y={ry} width={tw} height={th} fill="#FFFDF3" stroke="#000" strokeWidth={1.5} />
-              <rect x={rx} y={ry} width={tw} height={18} fill="#FF1300" />
+              <rect x={rx} y={ry} width={tw} height={20} fill="#FF1300" />
               <text
-                x={rx + 8} y={ry + 13}
-                fill="#FFFDF3" fontFamily="var(--font-jai-display)" fontSize={10}
+                x={rx + 8} y={ry + 14}
+                fill="#FFFDF3" fontFamily="var(--font-jai-display)" fontSize={11}
                 style={{ letterSpacing: '0.1em', textTransform: 'uppercase' }}
               >
                 {p.emoji} {p.label}
               </text>
-              {first && (
-                <text
-                  x={rx + 8} y={ry + 34}
-                  fill="#000" fontFamily="var(--font-body)" fontSize={11} fontWeight={600}
+              <foreignObject x={rx + 8} y={ry + 24} width={tw - 16} height={th - 28}>
+                <div
+                  // @ts-expect-error xmlns required for SVG foreignObject
+                  xmlns="http://www.w3.org/1999/xhtml"
+                  style={{
+                    fontFamily: 'var(--font-body)',
+                    fontSize: 11,
+                    lineHeight: 1.4,
+                    color: '#1a1a1a',
+                  }}
                 >
-                  {truncate(first.label, 26)}
-                </text>
-              )}
-              {first?.detail && (
-                <text
-                  x={rx + 8} y={ry + 50}
-                  fill="#6b6b6b" fontFamily="var(--font-body)" fontSize={10}
-                >
-                  {truncate(first.detail, 30)}
-                </text>
-              )}
-              {items.length > 1 && (
-                <text
-                  x={rx + 8} y={ry + 68}
-                  fill="#FF1300" fontFamily="var(--font-jai-display)" fontSize={9}
-                  style={{ letterSpacing: '0.08em' }}
-                >
-                  +{items.length - 1} MORE
-                </text>
-              )}
+                  {first && (
+                    <>
+                      <strong>{first.label}</strong>
+                      {first.detail && (
+                        <span style={{ color: '#6b6b6b' }}>
+                          {' '}— {first.detail}
+                        </span>
+                      )}
+                    </>
+                  )}
+                  {items.length > 1 && (
+                    <div
+                      style={{
+                        marginTop: 6,
+                        fontFamily: 'var(--font-jai-display)',
+                        fontSize: 9,
+                        letterSpacing: '0.08em',
+                        color: '#FF1300',
+                      }}
+                    >
+                      +{items.length - 1} MORE BELOW
+                    </div>
+                  )}
+                </div>
+              </foreignObject>
             </g>
           )
         })}
       </svg>
 
-      {/* Detail expandables below the graph */}
-      <details style={{ marginTop: 10 }}>
-        <summary style={{ cursor: 'pointer', fontFamily: 'var(--font-jai-display)', fontSize: 10, letterSpacing: '0.1em', color: '#6b6b6b', textTransform: 'uppercase' }}>
-          Show all bullets
-        </summary>
-        <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-          {nonEmpty.map((b) => (
-            <div key={`list-${b.key}`} style={{ borderLeft: '3px solid #000', padding: '4px 10px' }}>
-              <p className="jai-mono-label" style={{ margin: 0, fontSize: 9, color: '#000' }}>
-                {b.emoji} {b.label}
-              </p>
-              <ul style={{ margin: '4px 0 0 0', padding: 0, listStyle: 'none' }}>
-                {(mindmap[b.key] ?? []).slice(0, 5).map((it, i) => (
-                  <li key={i} style={{ fontSize: 11, lineHeight: 1.4, marginBottom: 3, color: '#1a1a1a' }}>
-                    <strong>{it.label}</strong>
-                    {it.detail && <span style={{ color: '#6b6b6b' }}> — {it.detail.slice(0, 90)}</span>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      </details>
+      {/* Full bullet list, always visible — the SVG above is just the
+          at-a-glance schematic. Detail lives here. */}
+      <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+        {nonEmpty.map((b) => (
+          <div key={`list-${b.key}`} style={{ background: '#FAF6E6', borderLeft: '3px solid #000', padding: '10px 12px' }}>
+            <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#000' }}>
+              {b.emoji} {b.label}
+            </p>
+            <ul style={{ margin: '6px 0 0 0', padding: 0, listStyle: 'none' }}>
+              {(mindmap[b.key] ?? []).slice(0, 5).map((it, i) => (
+                <li key={i} style={{ fontSize: 11.5, lineHeight: 1.45, marginBottom: 6, color: '#1a1a1a' }}>
+                  <strong>{it.label}</strong>
+                  {it.detail && <span style={{ color: '#6b6b6b' }}> — {it.detail}</span>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
