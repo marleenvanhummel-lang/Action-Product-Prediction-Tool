@@ -36,10 +36,13 @@ export function TrendVisual({
   size?: 'hero' | 'medium' | 'compact'
 }) {
   const pal = paletteFor(trend.category)
+  // If we have a real thumbnail use generous dims, otherwise stay thin
+  // so the SVG poster doesn't dominate the card.
+  const hasThumb = !!trend.thumbnailUrl
   const dims = size === 'hero'
-    ? { width: '100%', height: 360 }
+    ? { width: '100%', height: hasThumb ? 280 : 120 }
     : size === 'medium'
-      ? { width: '100%', height: 200 }
+      ? { width: '100%', height: hasThumb ? 180 : 90 }
       : { width: 80, height: 80 }
 
   if (trend.thumbnailUrl) {
@@ -57,8 +60,8 @@ export function TrendVisual({
     )
   }
 
-  // SVG poster — typographic placeholder
-  const name = trend.name.replace(/^#/, '').slice(0, 32)
+  // SVG poster — thin typographic placeholder. The trend headline lives
+  // in the card body, so the poster stays decorative + lightweight.
   const isLarge = size === 'hero' || size === 'medium'
   return (
     <div
@@ -67,9 +70,6 @@ export function TrendVisual({
         backgroundColor: pal.bg,
         position: 'relative',
         overflow: 'hidden',
-        display: 'flex',
-        alignItems: 'flex-end',
-        padding: isLarge ? 24 : 8,
       }}
     >
       {/* Decorative diagonal stripe */}
@@ -82,61 +82,44 @@ export function TrendVisual({
           width: '80%',
           height: '140%',
           background: pal.accent,
-          opacity: 0.08,
+          opacity: 0.1,
           transform: 'rotate(15deg)',
         }}
       />
       {/* Category tag top-left */}
+      {isLarge && (
+        <span
+          style={{
+            position: 'absolute',
+            top: 12,
+            left: 12,
+            fontFamily: 'var(--font-jai-display)',
+            fontSize: 10,
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+            color: '#FFFDF3',
+            background: '#000',
+            padding: '3px 8px',
+          }}
+        >
+          {trend.category}
+        </span>
+      )}
+      {/* Bold # mark — anchors the poster visually without a headline */}
       <span
         style={{
           position: 'absolute',
-          top: isLarge ? 16 : 6,
-          left: isLarge ? 16 : 6,
+          right: isLarge ? 20 : 4,
+          bottom: isLarge ? 8 : 2,
           fontFamily: 'var(--font-jai-display)',
-          fontSize: isLarge ? 10 : 7,
-          letterSpacing: '0.15em',
-          textTransform: 'uppercase',
+          fontSize: size === 'hero' ? 80 : size === 'medium' ? 56 : 28,
           color: pal.accent,
-          background: '#000',
-          padding: isLarge ? '3px 8px' : '2px 4px',
+          lineHeight: 0.85,
+          opacity: 0.85,
         }}
       >
-        {trend.category}
+        #
       </span>
-      {/* Title */}
-      {isLarge && (
-        <h3
-          style={{
-            margin: 0,
-            fontFamily: 'var(--font-jai-display)',
-            fontSize: size === 'hero' ? 44 : 22,
-            lineHeight: 0.95,
-            color: pal.fg,
-            textTransform: 'uppercase',
-            letterSpacing: '-0.02em',
-            position: 'relative',
-            zIndex: 1,
-            maxWidth: '90%',
-          }}
-        >
-          {name}
-          <span style={{ color: pal.accent }}>.</span>
-        </h3>
-      )}
-      {!isLarge && (
-        <span
-          style={{
-            fontFamily: 'var(--font-jai-display)',
-            fontSize: 28,
-            color: pal.accent,
-            position: 'absolute',
-            bottom: 4,
-            right: 8,
-          }}
-        >
-          #
-        </span>
-      )}
     </div>
   )
 }

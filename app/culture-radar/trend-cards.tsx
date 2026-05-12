@@ -228,7 +228,7 @@ export function HeroTrend({ trend }: { trend: TrendWithVariants }) {
         )}
         {/* Rank badge if SVG poster (visible regardless of overlay) */}
         {!trend.thumbnailUrl && (
-          <div style={{ position: 'absolute', top: 16, right: 16, background: '#FF1300', color: '#FFFDF3', padding: '6px 14px', fontFamily: 'var(--font-jai-display)', fontSize: 13, letterSpacing: '0.15em' }}>
+          <div style={{ position: 'absolute', top: 12, right: 12, background: '#FF1300', color: '#FFFDF3', padding: '4px 10px', fontFamily: 'var(--font-jai-display)', fontSize: 11, letterSpacing: '0.15em' }}>
             #1 TODAY
           </div>
         )}
@@ -238,9 +238,9 @@ export function HeroTrend({ trend }: { trend: TrendWithVariants }) {
           onClick={() => setExpanded((v) => !v)}
           title={expanded ? 'Collapse' : 'Expand'}
           style={{
-            position: 'absolute', top: 16, right: trend.thumbnailUrl ? 16 : 130,
+            position: 'absolute', bottom: 8, right: 12,
             background: '#FFFDF3', color: '#000', border: '1px solid #00000020',
-            width: 32, height: 32, cursor: 'pointer',
+            width: 28, height: 28, cursor: 'pointer',
             fontFamily: 'var(--font-jai-display)', fontSize: 14, lineHeight: 1,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
@@ -249,6 +249,22 @@ export function HeroTrend({ trend }: { trend: TrendWithVariants }) {
           {expanded ? '−' : '+'}
         </button>
       </div>
+
+      {/* Headline block — shown below the visual when no real thumbnail
+          (overlay version already renders the headline ON the image). */}
+      {!trend.thumbnailUrl && (
+        <div style={{ padding: '20px 28px 4px' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ background: '#000', color: '#FFFDF3', padding: '3px 10px', fontFamily: 'var(--font-jai-display)', fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase' }}>
+              {trend.category}
+            </span>
+            <MomentumPill trend={trend} size="md" />
+          </div>
+          <h2 style={{ margin: 0, fontFamily: 'var(--font-jai-display)', fontSize: 36, color: '#000', lineHeight: 0.95, textTransform: 'uppercase', letterSpacing: '-0.02em' }}>
+            {trend.name}<span style={{ color: '#FF1300' }}>.</span>
+          </h2>
+        </div>
+      )}
 
       {!expanded && (
         <div style={{ padding: '16px 28px 20px' }}>
@@ -618,9 +634,9 @@ function MindmapTeaser({ mindmap }: { mindmap: NonNullable<CultureTrend['mindmap
 
 // ── Mindmap compact (inline reveal for Featured/Compact) ──────────────────
 
-function MindmapCompact({ mindmap, centerLabel }: {
+function MindmapCompact({ mindmap }: {
   mindmap: NonNullable<CultureTrend['mindmap']>
-  centerLabel?: string
+  centerLabel?: string  // legacy prop, ignored
 }) {
   const sections: Array<{ key: keyof typeof mindmap; label: string; emoji: string }> = [
     { key: 'origin', label: 'Origin', emoji: '🌱' },
@@ -638,172 +654,15 @@ function MindmapCompact({ mindmap, centerLabel }: {
       <p className="jai-mono-label" style={{ color: '#000', margin: 0, fontSize: 10 }}>
         🧠 CONTEXT &amp; CONNECTIONS
       </p>
-      {centerLabel && <MindmapGraph mindmap={mindmap} centerLabel={centerLabel} />}
-      {!centerLabel && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginTop: 8 }}>
-          {nonEmpty.map((s) => (
-            <div key={s.key} style={{ borderLeft: '2px solid #000', paddingLeft: 8 }}>
-              <p className="jai-mono-label" style={{ margin: 0, fontSize: 9, color: '#000' }}>
-                {s.emoji} {s.label}
-              </p>
-              <ul style={{ margin: '4px 0 0 0', padding: 0, listStyle: 'none' }}>
-                {(mindmap[s.key] ?? []).slice(0, 3).map((it, i) => (
-                  <li key={i} style={{ fontSize: 11, lineHeight: 1.35, marginBottom: 2, color: '#1a1a1a' }}>
-                    <strong>{it.label}</strong>
-                    {it.detail && <span style={{ color: '#6b6b6b' }}> — {it.detail.slice(0, 90)}</span>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── Mindmap (radial node graph for hero, with bullet list below) ──────────
-
-function MindmapExpanded({ mindmap, centerLabel }: {
-  mindmap: NonNullable<CultureTrend['mindmap']>
-  centerLabel: string
-}) {
-  return (
-    <div style={{ padding: '0 28px 24px' }}>
-      <p className="jai-mono-label" style={{ color: '#6b6b6b', margin: '8px 0 4px 0', fontSize: 10 }}>
-        🧠 Context &amp; connections
-      </p>
-      <MindmapGraph mindmap={mindmap} centerLabel={centerLabel} />
-    </div>
-  )
-}
-
-// SVG radial graph: center node + 6 branch labels with mini bullets
-function MindmapGraph({ mindmap, centerLabel }: {
-  mindmap: NonNullable<CultureTrend['mindmap']>
-  centerLabel: string
-}) {
-  const branches = [
-    { key: 'origin' as const, label: 'Origin', emoji: '🌱' },
-    { key: 'spreading' as const, label: 'Spreading', emoji: '📡' },
-    { key: 'adjacent' as const, label: 'Adjacent', emoji: '🔗' },
-    { key: 'variations' as const, label: 'Variations', emoji: '🌀' },
-    { key: 'searches' as const, label: 'Searches', emoji: '🔍' },
-    { key: 'brandPlays' as const, label: 'Brand plays', emoji: '💼' },
-  ]
-  const nonEmpty = branches.filter((b) => (mindmap[b.key] ?? []).length > 0)
-  if (nonEmpty.length === 0) return null
-
-  const W = 980
-  const H = 460
-  const cx = W / 2
-  const cy = H / 2
-  const radius = 170
-
-  // Position 6 branches around the center (top, top-right, bottom-right, bottom, bottom-left, top-left)
-  const angles = [-90, -30, 30, 90, 150, 210]
-  const positions = nonEmpty.map((b, i) => {
-    const a = (angles[i] ?? 0) * Math.PI / 180
-    return {
-      ...b,
-      x: cx + Math.cos(a) * radius,
-      y: cy + Math.sin(a) * radius,
-      side: Math.cos(a) > 0.1 ? 'right' : Math.cos(a) < -0.1 ? 'left' : 'center',
-    }
-  })
-
-  return (
-    <div style={{ background: '#FFFDF3', border: '1px solid #00000010', padding: 12 }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
-        {/* Branch lines */}
-        {positions.map((p) => (
-          <line key={`line-${p.key}`} x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="#000" strokeWidth={1.5} opacity={0.3} />
-        ))}
-        {/* Center node */}
-        <g>
-          <circle cx={cx} cy={cy} r={68} fill="#000" />
-          <circle cx={cx} cy={cy} r={68} fill="none" stroke="#FF1300" strokeWidth={3} />
-          <text
-            x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
-            fill="#FFFDF3" fontFamily="var(--font-jai-display)" fontSize={13}
-            style={{ textTransform: 'uppercase', letterSpacing: '0.02em' }}
-          >
-            {wrapLabel(centerLabel, 14).map((line, i, arr) => (
-              <tspan key={i} x={cx} dy={i === 0 ? -((arr.length - 1) * 8) : 16}>{line}</tspan>
-            ))}
-          </text>
-        </g>
-        {/* Branch nodes — use foreignObject so text wraps naturally */}
-        {positions.map((p) => {
-          const items = mindmap[p.key] ?? []
-          const first = items[0]
-          const tw = 240
-          const th = 110
-          const rx = p.side === 'left' ? p.x - tw : p.side === 'right' ? p.x : p.x - tw / 2
-          const ry = p.y - th / 2
-          return (
-            <g key={`node-${p.key}`}>
-              <rect x={rx} y={ry} width={tw} height={th} fill="#FFFDF3" stroke="#000" strokeWidth={1.5} />
-              <rect x={rx} y={ry} width={tw} height={20} fill="#FF1300" />
-              <text
-                x={rx + 8} y={ry + 14}
-                fill="#FFFDF3" fontFamily="var(--font-jai-display)" fontSize={11}
-                style={{ letterSpacing: '0.1em', textTransform: 'uppercase' }}
-              >
-                {p.emoji} {p.label}
-              </text>
-              <foreignObject x={rx + 8} y={ry + 24} width={tw - 16} height={th - 28}>
-                <div
-                  // @ts-expect-error xmlns required for SVG foreignObject
-                  xmlns="http://www.w3.org/1999/xhtml"
-                  style={{
-                    fontFamily: 'var(--font-body)',
-                    fontSize: 11,
-                    lineHeight: 1.4,
-                    color: '#1a1a1a',
-                  }}
-                >
-                  {first && (
-                    <>
-                      <strong>{first.label}</strong>
-                      {first.detail && (
-                        <span style={{ color: '#6b6b6b' }}>
-                          {' '}— {first.detail}
-                        </span>
-                      )}
-                    </>
-                  )}
-                  {items.length > 1 && (
-                    <div
-                      style={{
-                        marginTop: 6,
-                        fontFamily: 'var(--font-jai-display)',
-                        fontSize: 9,
-                        letterSpacing: '0.08em',
-                        color: '#FF1300',
-                      }}
-                    >
-                      +{items.length - 1} MORE BELOW
-                    </div>
-                  )}
-                </div>
-              </foreignObject>
-            </g>
-          )
-        })}
-      </svg>
-
-      {/* Full bullet list, always visible — the SVG above is just the
-          at-a-glance schematic. Detail lives here. */}
-      <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-        {nonEmpty.map((b) => (
-          <div key={`list-${b.key}`} style={{ background: '#FAF6E6', borderLeft: '3px solid #000', padding: '10px 12px' }}>
-            <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#000' }}>
-              {b.emoji} {b.label}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginTop: 8 }}>
+        {nonEmpty.map((s) => (
+          <div key={s.key} style={{ borderLeft: '2px solid #000', paddingLeft: 8 }}>
+            <p className="jai-mono-label" style={{ margin: 0, fontSize: 9, color: '#000' }}>
+              {s.emoji} {s.label}
             </p>
-            <ul style={{ margin: '6px 0 0 0', padding: 0, listStyle: 'none' }}>
-              {(mindmap[b.key] ?? []).slice(0, 5).map((it, i) => (
-                <li key={i} style={{ fontSize: 11.5, lineHeight: 1.45, marginBottom: 6, color: '#1a1a1a' }}>
+            <ul style={{ margin: '4px 0 0 0', padding: 0, listStyle: 'none' }}>
+              {(mindmap[s.key] ?? []).slice(0, 4).map((it, i) => (
+                <li key={i} style={{ fontSize: 11, lineHeight: 1.4, marginBottom: 4, color: '#1a1a1a' }}>
                   <strong>{it.label}</strong>
                   {it.detail && <span style={{ color: '#6b6b6b' }}> — {it.detail}</span>}
                 </li>
@@ -816,24 +675,52 @@ function MindmapGraph({ mindmap, centerLabel }: {
   )
 }
 
-function wrapLabel(s: string, perLine: number): string[] {
-  const words = s.split(/\s+/)
-  const lines: string[] = []
-  let current = ''
-  for (const w of words) {
-    if ((current + ' ' + w).trim().length > perLine && current) {
-      lines.push(current.trim())
-      current = w
-    } else {
-      current = (current + ' ' + w).trim()
-    }
-    if (lines.length >= 2) break
-  }
-  if (current && lines.length < 3) lines.push(truncate(current, perLine))
-  return lines.slice(0, 3)
+// ── Mindmap (clean 3-column grid, no SVG decoration) ──────────────────────
+
+function MindmapExpanded({ mindmap }: {
+  mindmap: NonNullable<CultureTrend['mindmap']>
+  centerLabel?: string
+}) {
+  return (
+    <div style={{ padding: '0 28px 24px' }}>
+      <p className="jai-mono-label" style={{ color: '#6b6b6b', margin: '8px 0 12px 0', fontSize: 10 }}>
+        🧠 Context &amp; connections
+      </p>
+      <MindmapGrid mindmap={mindmap} />
+    </div>
+  )
 }
 
-function truncate(s: string, n: number): string {
-  if (s.length <= n) return s
-  return s.slice(0, n - 1) + '…'
+function MindmapGrid({ mindmap }: { mindmap: NonNullable<CultureTrend['mindmap']> }) {
+  const branches: Array<{ key: keyof typeof mindmap; label: string; emoji: string }> = [
+    { key: 'origin', label: 'Origin', emoji: '🌱' },
+    { key: 'spreading', label: 'Spreading', emoji: '📡' },
+    { key: 'adjacent', label: 'Adjacent', emoji: '🔗' },
+    { key: 'variations', label: 'Variations', emoji: '🌀' },
+    { key: 'searches', label: 'Searches', emoji: '🔍' },
+    { key: 'brandPlays', label: 'Brand plays', emoji: '💼' },
+  ]
+  const nonEmpty = branches.filter((b) => (mindmap[b.key] ?? []).length > 0)
+  if (nonEmpty.length === 0) return null
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+      {nonEmpty.map((b) => (
+        <div key={b.key} style={{ background: '#FAF6E6', borderLeft: '3px solid #000', padding: '10px 14px' }}>
+          <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#000' }}>
+            {b.emoji} {b.label}
+          </p>
+          <ul style={{ margin: '8px 0 0 0', padding: 0, listStyle: 'none' }}>
+            {(mindmap[b.key] ?? []).slice(0, 5).map((it, i) => (
+              <li key={i} style={{ fontSize: 12, lineHeight: 1.45, marginBottom: 6, color: '#1a1a1a' }}>
+                <strong>{it.label}</strong>
+                {it.detail && <span style={{ color: '#6b6b6b' }}> — {it.detail}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  )
 }
+
