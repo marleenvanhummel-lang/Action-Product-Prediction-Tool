@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/culture-db'
-import { inferCountryRelevance } from '@/lib/trend-country'
+import { inferCountryRelevance, ACTION_COUNTRIES, type CountryInferResult } from '@/lib/trend-country'
 
 export const maxDuration = 300
 
@@ -56,8 +56,9 @@ export async function POST(req: NextRequest) {
 
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
     const batch = rows.slice(i, i + BATCH_SIZE)
+    let results: CountryInferResult[]
     try {
-      const results = await inferCountryRelevance(
+      results = await inferCountryRelevance(
         batch.map((r) => ({
           id: r.id,
           name: r.name,
@@ -66,13 +67,22 @@ export async function POST(req: NextRequest) {
           hashtags: r.hashtags ?? [],
         })),
       )
+    } catch (err) {
+      // Gemini blew up — fall back to "global" for the entire batch so
+      // these don't get stuck untagged forever. Better safe than missing.
+      console.error('[enrich-countries] batch failed, defaulting to global', err)
+      results = batch.map((r) => ({
+        id: r.id,
+        countries: [...ACTION_COUNTRIES],
+        scope: 'global' as const,
+      }))
+      failed += batch.length
+    }
 
-      for (const r of results) {
-        scopeSummary[r.scope] = (scopeSummary[r.scope] ?? 0) + 1
-
+    for (const r of results) {
+      scopeSummary[r.scope] = (scopeSummary[r.scope] ?? 0) + 1
+      try {
         if (r.scope === 'none') {
-          // Archive the trend — Action doesn't care about UK football
-          // or US politics. Keep it in the DB but hide it from the UI.
           await sql().query(
             `UPDATE culture_trends SET status = 'archived', country_relevance = '{}', updated_at = NOW() WHERE id = $1`,
             [r.id],
@@ -85,10 +95,9 @@ export async function POST(req: NextRequest) {
           )
           tagged++
         }
+      } catch (err) {
+        console.error('[enrich-countries] db update failed for', r.id, err)
       }
-    } catch (err) {
-      console.error('[enrich-countries] batch failed', err)
-      failed += batch.length
     }
   }
 
