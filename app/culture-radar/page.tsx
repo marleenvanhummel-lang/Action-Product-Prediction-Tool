@@ -6,7 +6,7 @@ import type { CultureSource, CultureTrend } from '@/types/culture'
 import { styleFor, LIFECYCLE_VISUAL } from './category-style'
 import { CompactTrend } from './trend-cards'
 
-type View = 'daily' | 'weekly' | 'all' | 'emerging' | 'inspiration'
+type View = 'daily' | 'weekly' | 'all' | 'emerging' | 'inspiration' | 'gtrends'
 
 interface TrendsResponse {
   week: string
@@ -425,7 +425,7 @@ export default function CultureRadarPage() {
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
             {/* Unified red tabs */}
             <div style={{ display: 'inline-flex', border: '1px solid #00000020', background: '#FFFDF3' }}>
-              {(['daily', 'weekly', 'inspiration', 'emerging', 'all'] as const).map((v) => (
+              {(['daily', 'weekly', 'gtrends', 'inspiration', 'emerging', 'all'] as const).map((v) => (
                 <button
                   key={v}
                   onClick={() => setView(v)}
@@ -455,7 +455,7 @@ export default function CultureRadarPage() {
                       position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: '#FF1300',
                     }} />
                   )}
-                  {v === 'daily' ? 'Today' : v === 'weekly' ? 'This week' : v === 'inspiration' ? 'Inspiration' : v === 'emerging' ? 'Emerging' : 'All'}
+                  {v === 'daily' ? 'Today' : v === 'weekly' ? 'This week' : v === 'gtrends' ? 'Live Search' : v === 'inspiration' ? 'Inspiration' : v === 'emerging' ? 'Emerging' : 'All'}
                 </button>
               ))}
             </div>
@@ -659,7 +659,9 @@ export default function CultureRadarPage() {
         </div>
 
         {/* Trends list */}
-        {loading ? (
+        {view === 'gtrends' ? (
+          <GoogleTrendsPulse expanded />
+        ) : loading ? (
           <div style={{ padding: 48, textAlign: 'center' }}>
             <p className="jai-mono-label" style={{ color: '#FF1300', margin: 0 }}>Loading…</p>
             <p className="jai-serif" style={{ margin: '8px 0 0 0', fontSize: 18 }}>Pulling fresh signals from the culture firehose.</p>
@@ -685,7 +687,6 @@ export default function CultureRadarPage() {
           const showPulse = !country && !search && !vibe && !subculture && minGrowth === 0
           return (
             <div>
-              {showPulse && <GoogleTrendsPulse />}
               {showPulse && <CountryPulse trends={bundledTrends} />}
               {showPulse && <BreakoutPulse trends={bundledTrends} />}
               {grouped.map(({ category: cat, items }) => (
@@ -1099,7 +1100,7 @@ interface GtPulseData {
   }>
 }
 
-function GoogleTrendsPulse() {
+function GoogleTrendsPulse({ expanded = false }: { expanded?: boolean } = {}) {
   const [data, setData] = useState<GtPulseData | null>(null)
   const [loaded, setLoaded] = useState(false)
 
@@ -1117,9 +1118,26 @@ function GoogleTrendsPulse() {
     return () => { cancelled = true }
   }, [])
 
-  if (!loaded) return null
-  if (!data || data.empty) return null
-  if (data.multiCountry.length === 0 && data.newToday.length === 0 && data.risingFast.length === 0) return null
+  if (!loaded) {
+    if (!expanded) return null
+    return (
+      <div style={{ padding: 48, textAlign: 'center' }}>
+        <p className="jai-mono-label" style={{ color: '#FF1300', margin: 0 }}>Loading live search pulse…</p>
+        <p style={{ fontFamily: 'var(--font-jai-display)', fontSize: 18, margin: '8px 0 0 0', color: '#000' }}>Pulling Google Trends + Gemini interpretation.</p>
+      </div>
+    )
+  }
+  if (!data || data.empty) {
+    if (!expanded) return null
+    return (
+      <div className="jai-card" style={{ padding: 32, background: '#FAF6E6', textAlign: 'center' }}>
+        <p className="jai-mono-label" style={{ color: '#FF1300', margin: 0 }}>No snapshot yet</p>
+        <p style={{ fontFamily: 'var(--font-jai-display)', fontSize: 22, margin: '12px 0 6px 0', color: '#000' }}>Waiting for first snapshot today.</p>
+        <p style={{ fontSize: 13, color: '#6b6b6b', margin: 0 }}>The daily cron runs at 07:00 UTC. Come back after that.</p>
+      </div>
+    )
+  }
+  if (data.multiCountry.length === 0 && data.newToday.length === 0 && data.risingFast.length === 0 && (!data.countrySpikes || data.countrySpikes.length === 0)) return null
 
   const flag = (g: string) => {
     const m: Record<string, string> = { NL: '🇳🇱', BE: '🇧🇪', FR: '🇫🇷', DE: '🇩🇪', AT: '🇦🇹', CH: '🇨🇭', ES: '🇪🇸', IT: '🇮🇹', PT: '🇵🇹', PL: '🇵🇱', CZ: '🇨🇿', SK: '🇸🇰', HU: '🇭🇺', RO: '🇷🇴' }
@@ -1128,15 +1146,30 @@ function GoogleTrendsPulse() {
 
   return (
     <div style={{ marginBottom: 28 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0 12px 0' }}>
-        <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 22, letterSpacing: '-0.01em', color: '#000', textTransform: 'uppercase', lineHeight: 1 }}>
-          Live Google Trends<span style={{ color: '#FF1300' }}>.</span>
-        </span>
-        <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 10, letterSpacing: '0.15em', color: '#6b6b6b', textTransform: 'uppercase' }}>
-          Cross-country search pulse · last 24h
-        </span>
-        <div style={{ flex: 1, height: 2, background: '#000' }} />
-      </div>
+      {expanded ? (
+        <div style={{ background: '#000', color: '#FFFDF3', padding: '24px 28px', marginBottom: 20, border: '1px solid #FF1300' }}>
+          <p className="jai-mono-label" style={{ margin: 0, color: '#FF1300' }}>LIVE SEARCH PULSE</p>
+          <h2 style={{ margin: '8px 0 4px 0', fontFamily: 'var(--font-jai-display)', fontSize: 36, lineHeight: 1, textTransform: 'uppercase', letterSpacing: '-0.02em' }}>
+            Google Trends<span style={{ color: '#FF1300' }}>.</span>
+          </h2>
+          <p style={{ margin: '6px 0 0 0', fontFamily: 'var(--font-body)', fontSize: 13, opacity: 0.7, maxWidth: 720 }}>
+            Real-time search pulse across all 14 Action markets. Multi-country signals + daily-delta + per-country spikes, each interpreted by Gemini with article context and Action angle. Updated every cron run.
+          </p>
+          <p style={{ margin: '10px 0 0 0', fontFamily: 'var(--font-jai-display)', fontSize: 10, letterSpacing: '0.15em', color: '#FFFDF3', opacity: 0.5, textTransform: 'uppercase' }}>
+            Snapshot {data.snapshotDate ?? '—'}
+          </p>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0 12px 0' }}>
+          <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 22, letterSpacing: '-0.01em', color: '#000', textTransform: 'uppercase', lineHeight: 1 }}>
+            Live Google Trends<span style={{ color: '#FF1300' }}>.</span>
+          </span>
+          <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 10, letterSpacing: '0.15em', color: '#6b6b6b', textTransform: 'uppercase' }}>
+            Cross-country search pulse · last 24h
+          </span>
+          <div style={{ flex: 1, height: 2, background: '#000' }} />
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
         {/* Multi-country panel */}
@@ -1149,7 +1182,7 @@ function GoogleTrendsPulse() {
               Searches trending in 3+ Action markets right now
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {data.multiCountry.slice(0, 8).map((m, i) => {
+              {data.multiCountry.slice(0, expanded ? 25 : 8).map((m, i) => {
                 const relColor = m.actionRelevance === 'high' ? '#FF1300'
                   : m.actionRelevance === 'medium' ? '#FFFDF3'
                   : '#9ca3af'
@@ -1212,7 +1245,7 @@ function GoogleTrendsPulse() {
               In today's top, not in yesterday's. Earliest catch.
             </p>
             <ol style={{ margin: 0, padding: '0 0 0 18px' }}>
-              {data.newToday.slice(0, 10).map((n, i) => (
+              {data.newToday.slice(0, expanded ? 20 : 10).map((n, i) => (
                 <li key={i} style={{ marginBottom: 6, fontSize: 12, lineHeight: 1.35, color: '#1a1a1a' }}>
                   <span style={{ marginRight: 4 }}>{flag(n.geo)}</span>
                   <strong>{n.title}</strong>
@@ -1233,7 +1266,7 @@ function GoogleTrendsPulse() {
               Climbed 5+ ranks vs yesterday
             </p>
             <ol style={{ margin: 0, padding: '0 0 0 18px' }}>
-              {data.risingFast.slice(0, 10).map((r, i) => (
+              {data.risingFast.slice(0, expanded ? 20 : 10).map((r, i) => (
                 <li key={i} style={{ marginBottom: 6, fontSize: 12, lineHeight: 1.35, color: '#1a1a1a' }}>
                   <span style={{ marginRight: 4 }}>{flag(r.geo)}</span>
                   <strong>{r.title}</strong>
