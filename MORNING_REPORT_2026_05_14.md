@@ -97,15 +97,54 @@ Some labels are too generic ("Today's Hot Topics", "Smart Daily Solutions") beca
 ## What's still on the roadmap (not done tonight)
 
 - AI-generated cinematic hero images per top trend (newsletter visual upgrade)
-- Cross-platform velocity tracking (time from TikTok to Reddit)
 - Brand activation tracker (which trends competitors already executed)
-- Reverse-discovery: start from Action product categories, query matching trends
 - Webhook alerts (Slack / email when growth_score > 8.5)
-- TikTok Discover dedicated structured parser (right now /discover pages go through generic Firecrawl + Gemini)
 - PDF magazine generation
-- Per-trend creator collaboration matchmaker
 
 See `PLAN_NIGHT_2026_05_13.md` for the full strategic roadmap.
+
+## Roadmap follow-up (after you said "volg de roadmap ook al")
+
+Five additional features shipped:
+
+### 10. TikTok /discover structured parser
+- `lib/tiktok-discover.ts` parses rendered HTML for video + creator + topic data without Gemini.
+- `scrapeSource` detects `/discover/` URLs and uses the dedicated parser. The synthetic markdown payload still flows through the extract pipeline, but the video list itself is now deterministic (no hallucination risk).
+
+### 11. Cross-platform velocity tracking
+- `/api/culture/cross-platform-velocity` aggregates source-class distribution per trend.
+- Insights panel: platform distribution, top platform pairs, 3+ platform trends (cross-confirmed), newsletter-only early signals (culture writers ahead of mainstream).
+
+### 12. Reverse discovery
+- `/api/culture/reverse-discover` takes an Action product category and returns matched trends ranked by fit + popularity + growth + urgency.
+- Insights page has an interactive search input with quick-preset buttons (Home cleaning, Kids toys, Beauty essentials, Garden, Back to school, Halloween decor).
+
+### 13. Creator matchmaker per trend
+- `/api/culture/trend/[slug]/creators` scores creators from `culture_creators` by country overlap + subculture/vibe/category cues + hashtag tag overlap.
+- Trend detail page shows a "Matched creators" grid with fit score + match reasons.
+- Useful for "we want to lean into this trend — who could we collab with?"
+
+### 14. Anomaly detection (sudden spikes)
+- `/api/culture/anomalies` compares each trend's latest snapshot to its 3-day rolling baseline.
+- Two kinds: "spike" (jumped 2+ points), "freshman" (brand new high-popularity).
+- Top panel in Insights — early-warning system for "something popped overnight".
+
+### 15. Recommendation engine
+- `/api/culture/recommend` uses team feedback signal (feedback_useful / feedback_generic) to compute liked/disliked centroids in embedding space.
+- Surfaces unrated trends closest to liked centroid (with dislike penalty).
+- Empty state explains: mark trends as 👍 useful to seed the engine.
+- "You liked X, you might want to lean into Y" — personalized to Action's editorial choices.
+
+## Final structure of /culture-radar/insights
+
+Top to bottom:
+1. **Sudden spikes** (anomalies, "something popped")
+2. **Recommendations** (personalized via feedback + embeddings)
+3. **Reverse discovery** (interactive: query → matched trends)
+4. **Cross-platform velocity** (which trends spanned the most channels)
+5. **Emerging clusters** (k-means + AI-named themes)
+6. **Subculture trajectory** (rising/fading per niche, week-over-week)
+7. **Source health scorecard** (A-F grade per source by verify verdict)
 
 ## Where to look first when you wake up
 
