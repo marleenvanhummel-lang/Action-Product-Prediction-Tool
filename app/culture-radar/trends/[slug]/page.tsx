@@ -47,10 +47,25 @@ interface TrendDetailResponse {
   verifyVerdict: string | null
 }
 
+interface CreatorMatch {
+  handle: string
+  platform: string
+  profileUrl: string | null
+  name: string | null
+  niche: string | null
+  whyRelevant: string | null
+  followerCount: number | null
+  countries: string[]
+  fitScore: number
+  matchReasons: string[]
+  exampleVideoUrls: string[]
+}
+
 export default function TrendDetailPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params)
   const [data, setData] = useState<TrendDetailResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [creators, setCreators] = useState<CreatorMatch[]>([])
 
   useEffect(() => {
     apiFetch(`/api/culture/trend/${encodeURIComponent(slug)}`)
@@ -60,11 +75,16 @@ export default function TrendDetailPage({ params }: { params: Promise<{ slug: st
       })
       .then((d: TrendDetailResponse) => setData(d))
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+
+    apiFetch(`/api/culture/trend/${encodeURIComponent(slug)}/creators`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => setCreators(d?.creators ?? []))
+      .catch(() => { /* best-effort */ })
   }, [slug])
 
   if (error) return <ErrorState slug={slug} message={error} />
   if (!data) return <LoadingState />
-  return <Detail data={data} />
+  return <Detail data={data} creators={creators} />
 }
 
 function LoadingState() {
@@ -87,7 +107,7 @@ function ErrorState({ slug, message }: { slug: string; message: string }) {
   )
 }
 
-function Detail({ data }: { data: TrendDetailResponse }) {
+function Detail({ data, creators }: { data: TrendDetailResponse; creators: CreatorMatch[] }) {
   const { trend, snapshots, similar, lifecycle, verifyVerdict } = data
   const brief = trend.brandBrief
   const mindmap = trend.mindmap
@@ -228,6 +248,47 @@ function Detail({ data }: { data: TrendDetailResponse }) {
                 }}>
                   → {new URL(u).hostname}{new URL(u).pathname.slice(0, 40)}
                 </a>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {/* Creator matchmaker */}
+        {creators.length > 0 && (
+          <Section title="Matched creators">
+            <p style={{ margin: '0 0 12px', fontSize: 12, color: '#6b6b6b' }}>
+              Creators from our tracked cohort whose niche/country/tags match this trend.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+              {creators.map((c) => (
+                <div key={c.handle} className="jai-card" style={{ padding: 12, background: '#FFFDF3', border: '1px solid #00000020' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 14, color: '#000' }}>
+                      @{c.handle}
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#FF1300' }}>
+                      FIT {c.fitScore}
+                    </span>
+                  </div>
+                  {c.followerCount != null && (
+                    <p style={{ margin: '2px 0 4px', fontSize: 10, color: '#6b6b6b' }}>
+                      {c.followerCount.toLocaleString('en-US')} followers · {c.platform.toUpperCase()}
+                    </p>
+                  )}
+                  {c.niche && (
+                    <p style={{ margin: '4px 0', fontSize: 12, color: '#1a1a1a' }}>{c.niche}</p>
+                  )}
+                  {c.matchReasons.length > 0 && (
+                    <p style={{ margin: '6px 0 0', fontSize: 10, color: '#FF1300' }}>
+                      {c.matchReasons.slice(0, 3).join(' · ')}
+                    </p>
+                  )}
+                  {c.profileUrl && (
+                    <a href={c.profileUrl} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: 6, fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#000', textDecoration: 'underline' }}>
+                      → PROFILE
+                    </a>
+                  )}
+                </div>
               ))}
             </div>
           </Section>
