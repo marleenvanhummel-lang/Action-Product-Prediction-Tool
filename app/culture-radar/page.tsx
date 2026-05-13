@@ -1166,7 +1166,7 @@ function BreakoutPulse({ trends }: { trends: CultureTrend[] }) {
         {top.map((t) => (
           <div key={t.id} className="jai-card" style={{ padding: 12, background: '#000', color: '#FFFDF3', border: '1px solid #FF1300' }}>
             <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#FF1300' }}>
-              ↗ {t.growthScore?.toFixed(1)}/10 · GROWTH POTENTIAL
+              ↗ {Number(t.growthScore).toFixed(1)}/10 · GROWTH POTENTIAL
             </p>
             <p style={{ margin: '6px 0 4px 0', fontFamily: 'var(--font-jai-display)', fontSize: 15, lineHeight: 1.1, textTransform: 'uppercase', letterSpacing: '-0.01em' }}>
               {t.name}

@@ -52,15 +52,17 @@ function SubcultureChip({ subculture }: { subculture: string | null }) {
 
 function GrowthBadge({ score }: { score: number | null }) {
   if (score == null) return null
+  const n = typeof score === 'number' ? score : Number(score)
+  if (Number.isNaN(n)) return null
   let bg: string, fg: string, label: string
-  if (score >= 8) { bg = '#FF1300'; fg = '#FFFDF3'; label = 'BREAKOUT' }
-  else if (score >= 6.5) { bg = '#000'; fg = '#FFFDF3'; label = 'CLIMBING' }
-  else if (score >= 5) { bg = '#FFFDF3'; fg = '#000'; label = 'GROWING' }
+  if (n >= 8) { bg = '#FF1300'; fg = '#FFFDF3'; label = 'BREAKOUT' }
+  else if (n >= 6.5) { bg = '#000'; fg = '#FFFDF3'; label = 'CLIMBING' }
+  else if (n >= 5) { bg = '#FFFDF3'; fg = '#000'; label = 'GROWING' }
   else return null  // hide low scores to reduce visual noise
 
   return (
     <span
-      title={`Growth potential ${score}/10 — predicts whether this trend will grow in the next 14 days`}
+      title={`Growth potential ${n.toFixed(1)}/10 — predicts whether this trend will grow in the next 14 days`}
       style={{
         fontFamily: 'var(--font-jai-display)',
         fontSize: 9,
@@ -73,7 +75,7 @@ function GrowthBadge({ score }: { score: number | null }) {
         border: bg === '#FFFDF3' ? '1px solid #00000020' : 'none',
       }}
     >
-      ↗ {score.toFixed(1)} · {label}
+      ↗ {n.toFixed(1)} · {label}
     </span>
   )
 }

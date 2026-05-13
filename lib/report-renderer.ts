@@ -494,7 +494,7 @@ function renderBreakoutSection(trends: TrendForReport[]): string {
 function renderBreakoutCard(t: TrendForReport): string {
   const color = CATEGORY_COLOR[t.category] ?? '#FF1300'
   const emoji = CATEGORY_EMOJI[t.category] ?? '🔥'
-  const score = (t.growth_score ?? 0).toFixed(1)
+  const score = Number(t.growth_score ?? 0).toFixed(1)
   return `
 <tr><td style="padding:0 0 14px 0;">
   <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#1a1a1a;border:1px solid #FF1300;">

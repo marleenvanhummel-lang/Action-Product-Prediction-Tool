@@ -557,7 +557,7 @@ export function rowToTrend(row: TrendRowDB): CultureTrend {
     bundleKey: row.bundle_key ?? null,
     vibe: (row.vibe ?? null) as CultureTrend['vibe'],
     subculture: row.subculture ?? null,
-    growthScore: row.growth_score ?? null,
+    growthScore: row.growth_score == null ? null : Number(row.growth_score),
     mindmap: row.mindmap ?? null,
   }
 }
