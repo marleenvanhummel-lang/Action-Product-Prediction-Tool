@@ -19,20 +19,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 // fetchHandler import removed — cron now uses HTTP fetch to /scrape + /extract
 // so each stage gets its own 300s budget instead of sharing cron's.
-import { POST as backfillBriefsHandler } from '@/app/api/culture/backfill-briefs/route'
-import { POST as verifyUrlsHandler } from '@/app/api/culture/verify-urls/route'
-import { POST as scanCreatorsHandler } from '@/app/api/culture/scan-creators/route'
-import { POST as recomputeBundlesHandler } from '@/app/api/culture/recompute-bundles/route'
-import { POST as enrichMindmapsHandler } from '@/app/api/culture/enrich-mindmaps/route'
-import { POST as enrichCountriesHandler } from '@/app/api/culture/enrich-countries/route'
-import { POST as enrichVibesHandler } from '@/app/api/culture/enrich-vibes/route'
-import { POST as enrichSubculturesHandler } from '@/app/api/culture/enrich-subcultures/route'
-import { POST as computeGrowthHandler } from '@/app/api/culture/compute-growth/route'
-import { POST as snapshotHandler } from '@/app/api/culture/snapshot-trends/route'
-import { POST as snapshotGtHandler } from '@/app/api/culture/snapshot-gt/route'
-import { POST as verifyTrendsHandler } from '@/app/api/culture/verify-trends/route'
-import { POST as embedHandler } from '@/app/api/culture/embed/route'
-import { POST as lifecycleHandler } from '@/app/api/culture/compute-lifecycle/route'
+// All enrich/derive handlers are now called via external HTTP fetch
+// from this file (externalStep helper). That gives each step its own
+// 300s Vercel function budget. The imports above were removed —
+// cron-refresh no longer pulls them in-process.
 import { POST as momentsFetchHandler } from '@/app/api/moments/fetch/route'
 import { refreshMomentStatuses } from '@/lib/moments-db'
 import { POST as momentsBriefsHandler } from '@/app/api/moments/backfill-briefs/route'
@@ -41,6 +31,35 @@ import { sql } from '@/lib/culture-db'
 
 // Cron jobs are long-running. Max out within Hobby plan budget.
 export const maxDuration = 300
+
+/**
+ * Run an external HTTP step. Each step gets its own 300s function
+ * budget separate from the cron's, so we can chain 10+ enrich/AI
+ * steps without exceeding the cron's 300s.
+ */
+async function externalStep(
+  origin: string,
+  bearer: string,
+  path: string,
+  body: unknown = {},
+  timeoutMs = 270_000,
+): Promise<{ ok: boolean; data: Record<string, unknown> | null; error?: string }> {
+  try {
+    const ctrl = new AbortController()
+    const tid = setTimeout(() => ctrl.abort(), timeoutMs)
+    const res = await fetch(`${origin}${path}`, {
+      method: 'POST',
+      headers: { authorization: bearer, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    })
+    clearTimeout(tid)
+    const data = await res.json().catch(() => null)
+    return { ok: res.ok, data }
+  } catch (err) {
+    return { ok: false, data: null, error: err instanceof Error ? err.message : String(err) }
+  }
+}
 
 export async function GET(req: NextRequest) {
   const started = Date.now()
@@ -197,247 +216,62 @@ export async function GET(req: NextRequest) {
   let briefsFailed = 0
   if (!fetchError) {
     try {
-      const briefReq = new NextRequest(new URL('http://internal/api/culture/backfill-briefs'), {
-        method: 'POST',
-        headers: {
-          authorization: expectedBearer,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ limit: 15 }),
-      })
-      const res = await backfillBriefsHandler(briefReq)
-      const data = (await res.json()) as { briefed?: number; failed?: number }
-      briefsBriefed = data.briefed ?? 0
-      briefsFailed = data.failed ?? 0
+      const r = await externalStep(origin, expectedBearer, '/api/culture/backfill-briefs', { limit: 15 })
+      briefsBriefed = (r.data?.briefed as number) ?? 0
+      briefsFailed = (r.data?.failed as number) ?? 0
     } catch {
       /* best-effort */
     }
   }
 
-  // ── Step 2b: Daily Creator scan (25 new creators per cohort) ─────────
-  let creatorsScanned = 0
-  if (!fetchError) {
-    try {
-      const creatorReq = new NextRequest(new URL('http://internal/api/culture/scan-creators'), {
-        method: 'POST',
-        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-      const r = await scanCreatorsHandler(creatorReq)
-      const d = (await r.json()) as { inserted?: number }
-      creatorsScanned = d.inserted ?? 0
-    } catch {
-      /* best-effort */
-    }
-  }
+  // ── All post-extract enrichments via external HTTP fetch ─────────────
+  // Each step gets its own 300s function budget. Cron-refresh just
+  // orchestrates and aggregates the summaries. Run in parallel where
+  // possible (no cross-step dependencies).
+  const [
+    creatorsRes, bundlesRes, countriesRes, vibesRes, verifyRes,
+    subculturesRes,
+  ] = await Promise.all([
+    externalStep(origin, expectedBearer, '/api/culture/scan-creators'),
+    externalStep(origin, expectedBearer, '/api/culture/recompute-bundles'),
+    externalStep(origin, expectedBearer, '/api/culture/enrich-countries', { limit: 60 }),
+    externalStep(origin, expectedBearer, '/api/culture/enrich-vibes', { limit: 60 }),
+    externalStep(origin, expectedBearer, '/api/culture/verify-trends', { limit: 80 }),
+    externalStep(origin, expectedBearer, '/api/culture/enrich-subcultures', { limit: 60 }),
+  ])
+  const creatorsScanned = (creatorsRes.data?.inserted as number) ?? 0
+  const bundlesUpdated = (bundlesRes.data?.updated as number) ?? 0
+  const bundlesCleared = (bundlesRes.data?.cleared as number) ?? 0
+  const countriesTagged = (countriesRes.data?.tagged as number) ?? 0
+  const countriesDropped = (countriesRes.data?.dropped as number) ?? 0
+  const vibesTagged = (vibesRes.data?.tagged as number) ?? 0
+  const trendsArchived = (verifyRes.data?.archived as number) ?? 0
+  const subculturesTagged = (subculturesRes.data?.tagged as number) ?? 0
 
-  // ── Step 2c: Recompute bundle keys ────────────────────────────────────
-  let bundlesUpdated = 0
-  let bundlesCleared = 0
-  if (!fetchError) {
-    try {
-      const bundleReq = new NextRequest(new URL('http://internal/api/culture/recompute-bundles'), {
-        method: 'POST',
-        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-      const r = await recomputeBundlesHandler(bundleReq)
-      const d = (await r.json()) as { updated?: number; cleared?: number }
-      bundlesUpdated = d.updated ?? 0
-      bundlesCleared = d.cleared ?? 0
-    } catch {
-      /* best-effort */
-    }
-  }
+  // ── Derivations + snapshots (all external, all parallel) ────────────
+  const [
+    growthRes, embedRes, snapshotRes, gtSnapRes, lifecycleRes,
+  ] = await Promise.all([
+    externalStep(origin, expectedBearer, '/api/culture/compute-growth'),
+    externalStep(origin, expectedBearer, '/api/culture/embed', { limit: 80 }),
+    externalStep(origin, expectedBearer, '/api/culture/snapshot-trends'),
+    externalStep(origin, expectedBearer, '/api/culture/snapshot-gt'),
+    externalStep(origin, expectedBearer, '/api/culture/compute-lifecycle'),
+  ])
+  const growthScored = (growthRes.data?.updated as number) ?? 0
+  const embedsAdded = (embedRes.data?.embedded as number) ?? 0
+  const snapshotsInserted = (snapshotRes.data?.inserted as number) ?? 0
+  const gtItemsSnapped = (gtSnapRes.data?.inserted as number) ?? 0
+  const lifecyclesComputed = (lifecycleRes.data?.updated as number) ?? 0
 
-  // ── Step 2c2: Country relevance enrichment (geo filter accuracy) ─────
-  // Tag untagged trends with the Action markets they're relevant to.
-  // Trends tagged "none" (UK football, US news) get archived.
-  let countriesTagged = 0
-  let countriesDropped = 0
-  if (!fetchError) {
-    try {
-      const countryReq = new NextRequest(new URL('http://internal/api/culture/enrich-countries'), {
-        method: 'POST',
-        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
-        body: JSON.stringify({ limit: 60 }),
-      })
-      const r = await enrichCountriesHandler(countryReq)
-      const d = (await r.json()) as { tagged?: number; dropped?: number }
-      countriesTagged = d.tagged ?? 0
-      countriesDropped = d.dropped ?? 0
-    } catch {
-      /* best-effort */
-    }
-  }
-
-  // ── Step 2c3: Vibe classification (unhinged / aesthetic / humor / etc) ──
-  let vibesTagged = 0
-  if (!fetchError) {
-    try {
-      const vibeReq = new NextRequest(new URL('http://internal/api/culture/enrich-vibes'), {
-        method: 'POST',
-        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
-        body: JSON.stringify({ limit: 60 }),
-      })
-      const r = await enrichVibesHandler(vibeReq)
-      const d = (await r.json()) as { tagged?: number }
-      vibesTagged = d.tagged ?? 0
-    } catch {
-      /* best-effort */
-    }
-  }
-
-  // ── Step 2c3.5: Hallucination filter (fabricated trends → archived) ───
-  let trendsArchived = 0
-  if (!fetchError) {
-    try {
-      const vReq = new NextRequest(new URL('http://internal/api/culture/verify-trends'), {
-        method: 'POST',
-        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
-        body: JSON.stringify({ limit: 80 }),
-      })
-      const r = await verifyTrendsHandler(vReq)
-      const d = (await r.json()) as { archived?: number }
-      trendsArchived = d.archived ?? 0
-    } catch { /* best-effort */ }
-  }
-
-  // ── Step 2c4: Subculture classification ──────────────────────────────
-  let subculturesTagged = 0
-  if (!fetchError) {
-    try {
-      const subReq = new NextRequest(new URL('http://internal/api/culture/enrich-subcultures'), {
-        method: 'POST',
-        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
-        body: JSON.stringify({ limit: 60 }),
-      })
-      const r = await enrichSubculturesHandler(subReq)
-      const d = (await r.json()) as { tagged?: number }
-      subculturesTagged = d.tagged ?? 0
-    } catch { /* best-effort */ }
-  }
-
-  // ── Step 2c5: Predictive growth score (pure derivation, ~1s) ─────────
-  let growthScored = 0
-  if (!fetchError) {
-    try {
-      const gReq = new NextRequest(new URL('http://internal/api/culture/compute-growth'), {
-        method: 'POST',
-        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-      const r = await computeGrowthHandler(gReq)
-      const d = (await r.json()) as { updated?: number }
-      growthScored = d.updated ?? 0
-    } catch { /* best-effort */ }
-  }
-
-  // ── Step 2c5b: Trend embeddings (semantic vectors for clustering) ────
-  let embedsAdded = 0
-  if (!fetchError) {
-    try {
-      const eReq = new NextRequest(new URL('http://internal/api/culture/embed'), {
-        method: 'POST',
-        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
-        body: JSON.stringify({ limit: 80 }),
-      })
-      const r = await embedHandler(eReq)
-      const d = (await r.json()) as { embedded?: number }
-      embedsAdded = d.embedded ?? 0
-    } catch { /* best-effort */ }
-  }
-
-  // ── Step 2c6: Nightly trend metric snapshot (timeseries) ──────────────
-  let snapshotsInserted = 0
-  if (!fetchError) {
-    try {
-      const sReq = new NextRequest(new URL('http://internal/api/culture/snapshot-trends'), {
-        method: 'POST',
-        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-      const r = await snapshotHandler(sReq)
-      const d = (await r.json()) as { inserted?: number }
-      snapshotsInserted = d.inserted ?? 0
-    } catch { /* best-effort */ }
-  }
-
-  // ── Step 2c7: Google Trends snapshot for all 14 countries ────────────
-  let gtItemsSnapped = 0
-  if (!fetchError) {
-    try {
-      const gtReq = new NextRequest(new URL('http://internal/api/culture/snapshot-gt'), {
-        method: 'POST',
-        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-      const r = await snapshotGtHandler(gtReq)
-      const d = (await r.json()) as { inserted?: number }
-      gtItemsSnapped = d.inserted ?? 0
-    } catch { /* best-effort */ }
-  }
-
-  // ── Step 2c8: Lifecycle stage detection from snapshot timeseries ─────
-  let lifecyclesComputed = 0
-  if (!fetchError) {
-    try {
-      const lReq = new NextRequest(new URL('http://internal/api/culture/compute-lifecycle'), {
-        method: 'POST',
-        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-      const r = await lifecycleHandler(lReq)
-      const d = (await r.json()) as { updated?: number }
-      lifecyclesComputed = d.updated ?? 0
-    } catch { /* best-effort */ }
-  }
-
-  // ── Step 2d: Mindmap enrichment (Context & connections per trend) ─────
-  // One batch of 12 trends per cron run, ranked by daily_rank. The top
-  // hero/featured trends get a mindmap within one day of going active.
-  let mindmapsEnriched = 0
-  if (!fetchError) {
-    try {
-      const mindmapReq = new NextRequest(new URL('http://internal/api/culture/enrich-mindmaps'), {
-        method: 'POST',
-        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
-        body: JSON.stringify({ limit: 40 }),
-      })
-      const r = await enrichMindmapsHandler(mindmapReq)
-      const d = (await r.json()) as { enriched?: number }
-      mindmapsEnriched = d.enriched ?? 0
-    } catch {
-      /* best-effort */
-    }
-  }
-
-  // ── Step 3: URL verification (drop hallucinated TikTok URLs) ──────────
-  // Best-effort. We process the most-recent 30 trends — anything older has
-  // already been verified by a previous cron run.
-  let urlsKept = 0
-  let urlsDropped = 0
-  if (!fetchError) {
-    try {
-      const verifyReq = new NextRequest(new URL('http://internal/api/culture/verify-urls'), {
-        method: 'POST',
-        headers: {
-          authorization: expectedBearer,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ limit: 30 }),
-      })
-      const res = await verifyUrlsHandler(verifyReq)
-      const data = (await res.json()) as {
-        videoUrlsKept?: number
-        videoUrlsDropped?: number
-      }
-      urlsKept = data.videoUrlsKept ?? 0
-      urlsDropped = data.videoUrlsDropped ?? 0
-    } catch {
-      /* best-effort */
-    }
-  }
+  // ── Mindmap + URL verification (both external, parallel) ─────────────
+  const [mindmapRes, urlVerifyRes] = await Promise.all([
+    externalStep(origin, expectedBearer, '/api/culture/enrich-mindmaps', { limit: 40 }),
+    externalStep(origin, expectedBearer, '/api/culture/verify-urls', { limit: 30 }),
+  ])
+  const mindmapsEnriched = (mindmapRes.data?.enriched as number) ?? 0
+  const urlsKept = (urlVerifyRes.data?.videoUrlsKept as number) ?? 0
+  const urlsDropped = (urlVerifyRes.data?.videoUrlsDropped as number) ?? 0
 
   return NextResponse.json({
     ok: !fetchError,
