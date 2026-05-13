@@ -56,6 +56,7 @@ export default function MomentsRadarPage() {
   const [category, setCategory] = useState<MomentCategory | ''>('')
   const [tier, setTier] = useState<MomentTier | ''>('')
   const [horizon, setHorizon] = useState<number>(90)
+  const [sortBy, setSortBy] = useState<'date' | 'relevance'>('date')
 
   const [moments, setMoments] = useState<CultureMoment[]>([])
   const [loading, setLoading] = useState(false)
@@ -174,16 +175,28 @@ export default function MomentsRadarPage() {
     [country, today],
   )
 
-  // Group moments by month for the timeline view, sorted by effective date
+  // Group moments by month for the timeline view, sorted by date OR by
+  // Action relevance depending on the active sort toggle.
   const monthGroups = useMemo(() => {
-    const withDates = moments
-      .map((m) => ({ moment: m, date: effectiveDateFor(m) }))
-      .sort((a, b) => {
+    const withDates = moments.map((m) => ({ moment: m, date: effectiveDateFor(m) }))
+
+    if (sortBy === 'relevance') {
+      // Within each month bucket, sort by Action relevance descending.
+      // Month order itself stays date-ascending so timeline rhythm remains.
+      withDates.sort((a, b) => {
+        if (a.date && b.date && a.date.slice(0, 7) !== b.date.slice(0, 7)) {
+          return a.date.localeCompare(b.date)
+        }
+        return computeActionRelevance(b.moment) - computeActionRelevance(a.moment)
+      })
+    } else {
+      withDates.sort((a, b) => {
         if (!a.date && !b.date) return 0
         if (!a.date) return 1
         if (!b.date) return -1
         return a.date.localeCompare(b.date)
       })
+    }
 
     const groups: Record<string, CultureMoment[]> = {}
     for (const { moment, date } of withDates) {
@@ -193,7 +206,7 @@ export default function MomentsRadarPage() {
       ;(groups[key] ??= []).push(moment)
     }
     return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b))
-  }, [moments, effectiveDateFor])
+  }, [moments, effectiveDateFor, sortBy])
 
   return (
     <div className="jai-app" style={{ minHeight: '100vh' }}>
@@ -275,18 +288,49 @@ export default function MomentsRadarPage() {
             ))}
           </div>
 
-          <select
-            value={horizon}
-            onChange={(e) => setHorizon(Number(e.target.value))}
-            className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white"
-            style={{ fontFamily: 'var(--font-body)' }}
-          >
-            {HORIZONS.map((h) => (
-              <option key={h.value} value={h.value}>
-                {h.label}
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Sort toggle: by upcoming date or by Action relevance */}
+            <div className="inline-flex border border-gray-200 bg-white">
+              {(['date', 'relevance'] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setSortBy(s)}
+                  style={{
+                    fontFamily: 'var(--font-jai-display)',
+                    fontSize: 10,
+                    letterSpacing: '0.12em',
+                    padding: '6px 12px',
+                    textTransform: 'uppercase',
+                    background: sortBy === s ? '#000' : 'transparent',
+                    color: sortBy === s ? '#FFFDF3' : '#1a1a1a',
+                    border: 'none',
+                    cursor: 'pointer',
+                    borderRight: s === 'date' ? '1px solid #00000010' : 'none',
+                  }}
+                  title={
+                    s === 'date'
+                      ? 'Sort moments by upcoming date'
+                      : 'Sort by Action relevance score (within each month)'
+                  }
+                >
+                  {s === 'date' ? '📅 Date' : '★ Relevance'}
+                </button>
+              ))}
+            </div>
+
+            <select
+              value={horizon}
+              onChange={(e) => setHorizon(Number(e.target.value))}
+              className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white"
+              style={{ fontFamily: 'var(--font-body)' }}
+            >
+              {HORIZONS.map((h) => (
+                <option key={h.value} value={h.value}>
+                  {h.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Country filter */}
@@ -417,9 +461,40 @@ const CATEGORY_COLORS: Record<string, { bg: string; text: string }> = {
   pop_culture:    { bg: '#fae8ff', text: '#86198f' },
 }
 
+/**
+ * Composite "Action relevance" score 0-10 used to rank moments by how
+ * much they matter to Action's marketing team.
+ *
+ * Blends:
+ *   - cultural_relevance (general cultural importance, 0-10)
+ *   - brief.urgency       (Action-specific should-we-act-now, 0-10)
+ *   - product fit         (number of relevant product categories, 0-4)
+ *   - cultural tier bonus (cultural > standard)
+ */
+function computeActionRelevance(m: CultureMoment): number {
+  const brief = m.brandBrief
+  const cultural = m.culturalRelevance ?? 0
+  const urgency = brief?.urgency ?? cultural   // fall back to cultural if no brief
+  const productFit = Math.min(brief?.productCategories?.length ?? 0, 4)
+  const tierBonus = m.tier === 'cultural' ? 1 : 0
+
+  // Weighted: 30% cultural + 30% urgency + 10% per product cat (cap 4) + 1 bonus
+  const raw = cultural * 0.3 + urgency * 0.3 + productFit * 1 + tierBonus
+  return Math.max(0, Math.min(10, Math.round(raw)))
+}
+
+function relevanceBadgeStyle(score: number): { bg: string; fg: string; label: string } {
+  if (score >= 8) return { bg: '#FF1300', fg: '#FFFDF3', label: 'CRITICAL' }
+  if (score >= 6) return { bg: '#000',    fg: '#FFFDF3', label: 'HIGH' }
+  if (score >= 4) return { bg: '#FAF6E6', fg: '#000',    label: 'MEDIUM' }
+  return { bg: '#F5F5F5', fg: '#6b6b6b', label: 'LOW' }
+}
+
 function MomentRow({ moment, filterCountry }: { moment: CultureMoment; filterCountry: ActionCountry | '' }) {
   const brief = moment.brandBrief
   const isCultural = moment.tier === 'cultural'
+  const actionScore = computeActionRelevance(moment)
+  const badgeStyle = relevanceBadgeStyle(actionScore)
 
   // If a country filter is set, prefer that country's date
   const relevantDate: CountryDate | null = useMemo(() => {
@@ -498,14 +573,24 @@ function MomentRow({ moment, filterCountry }: { moment: CultureMoment; filterCou
                 CULTURAL
               </span>
             )}
-            {moment.culturalRelevance >= 8 && (
-              <span
-                className="text-[10px] font-medium px-2 py-0.5 rounded-full"
-                style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}
-              >
-                ★ high relevance
-              </span>
-            )}
+            <span
+              title={`Action relevance ${actionScore}/10 — blends cultural relevance, urgency, product fit and tier`}
+              style={{
+                fontFamily: 'var(--font-jai-display)',
+                fontSize: 10,
+                letterSpacing: '0.1em',
+                padding: '2px 8px',
+                background: badgeStyle.bg,
+                color: badgeStyle.fg,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                textTransform: 'uppercase',
+                border: badgeStyle.bg === '#FAF6E6' ? '1px solid #00000020' : 'none',
+              }}
+            >
+              ACTION {actionScore}/10 · {badgeStyle.label}
+            </span>
           </div>
           <p className="text-sm text-gray-700 mt-1">{moment.description}</p>
 
@@ -621,34 +706,6 @@ function MomentRow({ moment, filterCountry }: { moment: CultureMoment; filterCou
               </p>
               <p className="text-xs text-gray-700">{brief.contentAngle}</p>
             </div>
-            {brief.suggestedSound && (
-              <div className="flex items-start gap-1.5 text-xs">
-                <span style={{ color: '#7c3aed' }}>♪</span>
-                <p className="text-gray-700 flex-1">{brief.suggestedSound}</p>
-                {brief.soundRisk && (
-                  <span
-                    className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded"
-                    style={{
-                      backgroundColor:
-                        brief.soundRisk === 'safe'
-                          ? '#ecfdf5'
-                          : brief.soundRisk === 'risky'
-                            ? '#fef2f2'
-                            : '#fefce8',
-                      color:
-                        brief.soundRisk === 'safe'
-                          ? '#047857'
-                          : brief.soundRisk === 'risky'
-                            ? '#b91c1c'
-                            : '#a16207',
-                    }}
-                    title={brief.soundWarning ?? ''}
-                  >
-                    {brief.soundRisk === 'safe' ? '✓' : brief.soundRisk === 'risky' ? '⚠' : '?'}
-                  </span>
-                )}
-              </div>
-            )}
             {brief.productCategories?.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {brief.productCategories.map((c) => (
