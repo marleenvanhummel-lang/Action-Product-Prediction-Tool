@@ -9,6 +9,75 @@ import { computeMomentum } from '@/lib/trend-momentum'
 // Extended trend type with optional bundle variants
 type TrendWithVariants = CultureTrend & { bundleVariants?: CultureTrend[] }
 
+// ── Subculture chip ───────────────────────────────────────────────────────
+
+const SUBCULTURE_LABELS: Record<string, string> = {
+  cottagecore: 'Cottagecore', dark_academia: 'Dark Academia', clean_girl: 'Clean Girl',
+  mob_wife: 'Mob Wife', coquette: 'Coquette', balletcore: 'Balletcore',
+  weirdcore: 'Weirdcore', kidcore: 'Kidcore', y2k: 'Y2K', alt_fashion: 'Alt Fashion',
+  gorpcore: 'Gorpcore', italian_brainrot: 'Italian Brainrot',
+  gen_alpha_brainrot: 'Gen Alpha', ohio_culture: 'Ohio', ironic_seriousness: 'Ironic',
+  foodtok: 'FoodTok', beautytok: 'BeautyTok', fittok: 'FitTok', hometok: 'HomeTok',
+  booktok: 'BookTok', traveltok: 'TravelTok', gaming_fandom: 'Gaming',
+  kpop_fandom: 'K-Pop', anime_otaku: 'Anime', stan_culture: 'Stan',
+  tradwife: 'Tradwife', that_girl: 'That Girl', sleepmaxxing: 'Sleepmaxxing',
+  lookmax: 'Lookmaxxing', dimes_square: 'Dimes Square',
+  hyperpop: 'Hyperpop', indie_sleaze_revival: 'Indie Sleaze', sad_girl_pop: 'Sad Girl',
+}
+
+function SubcultureChip({ subculture }: { subculture: string | null }) {
+  if (!subculture) return null
+  const label = SUBCULTURE_LABELS[subculture] ?? subculture
+  return (
+    <span
+      title={`Subculture: ${label}`}
+      style={{
+        fontFamily: 'var(--font-jai-display)',
+        fontSize: 9,
+        letterSpacing: '0.08em',
+        padding: '2px 6px',
+        background: '#FFFDF3',
+        color: '#000',
+        border: '1px solid #000',
+        textTransform: 'uppercase',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      ◇ {label}
+    </span>
+  )
+}
+
+// ── Growth score badge (predictive) ───────────────────────────────────────
+
+function GrowthBadge({ score }: { score: number | null }) {
+  if (score == null) return null
+  let bg: string, fg: string, label: string
+  if (score >= 8) { bg = '#FF1300'; fg = '#FFFDF3'; label = 'BREAKOUT' }
+  else if (score >= 6.5) { bg = '#000'; fg = '#FFFDF3'; label = 'CLIMBING' }
+  else if (score >= 5) { bg = '#FFFDF3'; fg = '#000'; label = 'GROWING' }
+  else return null  // hide low scores to reduce visual noise
+
+  return (
+    <span
+      title={`Growth potential ${score}/10 — predicts whether this trend will grow in the next 14 days`}
+      style={{
+        fontFamily: 'var(--font-jai-display)',
+        fontSize: 9,
+        letterSpacing: '0.1em',
+        padding: '2px 6px',
+        background: bg,
+        color: fg,
+        textTransform: 'uppercase',
+        whiteSpace: 'nowrap',
+        border: bg === '#FFFDF3' ? '1px solid #00000020' : 'none',
+      }}
+    >
+      ↗ {score.toFixed(1)} · {label}
+    </span>
+  )
+}
+
 // ── Vibe chip (unhinged / aesthetic / humor / etc) ─────────────────────────
 
 const VIBE_STYLES: Record<string, { bg: string; fg: string; emoji: string; label: string }> = {
@@ -517,7 +586,9 @@ export function CompactTrend({ trend }: { trend: TrendWithVariants }) {
               </span>
             )}
             <p className="jai-mono-label" style={{ color: '#6b6b6b', margin: 0, fontSize: 9 }}>{trend.category}</p>
+            <GrowthBadge score={trend.growthScore} />
             <VibeChip vibe={trend.vibe} />
+            <SubcultureChip subculture={trend.subculture} />
             <MomentumPill trend={trend} />
             {trend.bundleVariants && trend.bundleVariants.length > 0 && (
               <span

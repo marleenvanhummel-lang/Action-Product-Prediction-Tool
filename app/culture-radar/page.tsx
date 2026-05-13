@@ -109,6 +109,8 @@ export default function CultureRadarPage() {
   const [category, setCategory] = useState<string>('')
   const [country, setCountry] = useState<string>('')
   const [vibe, setVibe] = useState<string>('')
+  const [subculture, setSubculture] = useState<string>('')
+  const [minGrowth, setMinGrowth] = useState<number>(0)
   const [search, setSearch] = useState<string>('')
   const [trends, setTrends] = useState<CultureTrend[]>([])
   const [sources, setSources] = useState<CultureSource[]>([])
@@ -135,6 +137,8 @@ export default function CultureRadarPage() {
       if (category) params.set('category', category)
       if (country) params.set('country', country)
       if (vibe) params.set('vibe', vibe)
+      if (subculture) params.set('subculture', subculture)
+      if (minGrowth > 0) params.set('minGrowth', String(minGrowth))
       const res = await apiFetch(`/api/culture/trends?${params}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data: TrendsResponse = await res.json()
@@ -145,7 +149,7 @@ export default function CultureRadarPage() {
     } finally {
       setLoading(false)
     }
-  }, [view, category, country, vibe])
+  }, [view, category, country, vibe, subculture, minGrowth])
 
   const loadSources = useCallback(async () => {
     try {
@@ -551,6 +555,90 @@ export default function CultureRadarPage() {
               <option value="sport">⚽ Sport</option>
             </select>
 
+            {/* Subculture select */}
+            <select
+              value={subculture}
+              onChange={(e) => setSubculture(e.target.value)}
+              title="Subculture — the corner of the internet this trend lives in"
+              style={{
+                padding: '8px 10px',
+                fontFamily: 'var(--font-body)',
+                fontSize: 12,
+                border: subculture ? '1px solid #FF1300' : '1px solid #00000020',
+                background: subculture ? '#FFE4E0' : '#FFFDF3',
+                color: subculture ? '#FF1300' : '#1a1a1a',
+                cursor: 'pointer',
+                fontWeight: subculture ? 600 : 400,
+              }}
+            >
+              <option value="">All subcultures</option>
+              <optgroup label="Aesthetics">
+                <option value="cottagecore">Cottagecore</option>
+                <option value="dark_academia">Dark Academia</option>
+                <option value="clean_girl">Clean Girl</option>
+                <option value="mob_wife">Mob Wife</option>
+                <option value="coquette">Coquette</option>
+                <option value="balletcore">Balletcore</option>
+                <option value="weirdcore">Weirdcore</option>
+                <option value="y2k">Y2K</option>
+                <option value="alt_fashion">Alt Fashion</option>
+                <option value="gorpcore">Gorpcore</option>
+                <option value="kidcore">Kidcore</option>
+              </optgroup>
+              <optgroup label="Internet chaos">
+                <option value="italian_brainrot">Italian Brainrot</option>
+                <option value="gen_alpha_brainrot">Gen Alpha Brainrot</option>
+                <option value="ohio_culture">Ohio Culture</option>
+                <option value="ironic_seriousness">Ironic Seriousness</option>
+              </optgroup>
+              <optgroup label="-Tok verticals">
+                <option value="foodtok">FoodTok</option>
+                <option value="beautytok">BeautyTok</option>
+                <option value="fittok">FitTok</option>
+                <option value="hometok">HomeTok</option>
+                <option value="booktok">BookTok</option>
+                <option value="traveltok">TravelTok</option>
+                <option value="gaming_fandom">Gaming</option>
+                <option value="kpop_fandom">K-Pop</option>
+                <option value="anime_otaku">Anime</option>
+                <option value="stan_culture">Stan</option>
+              </optgroup>
+              <optgroup label="Counter / lifestyle">
+                <option value="tradwife">Tradwife</option>
+                <option value="that_girl">That Girl</option>
+                <option value="sleepmaxxing">Sleepmaxxing</option>
+                <option value="lookmax">Lookmaxxing</option>
+                <option value="dimes_square">Dimes Square</option>
+              </optgroup>
+              <optgroup label="Music">
+                <option value="hyperpop">Hyperpop</option>
+                <option value="indie_sleaze_revival">Indie Sleaze</option>
+                <option value="sad_girl_pop">Sad Girl Pop</option>
+              </optgroup>
+            </select>
+
+            {/* Growth filter */}
+            <select
+              value={minGrowth}
+              onChange={(e) => setMinGrowth(Number(e.target.value))}
+              title="Growth potential — predictive score that this trend will grow in the next 14 days"
+              style={{
+                padding: '8px 10px',
+                fontFamily: 'var(--font-body)',
+                fontSize: 12,
+                border: minGrowth > 0 ? '1px solid #FF1300' : '1px solid #00000020',
+                background: minGrowth > 0 ? '#FFE4E0' : '#FFFDF3',
+                color: minGrowth > 0 ? '#FF1300' : '#1a1a1a',
+                cursor: 'pointer',
+                fontWeight: minGrowth > 0 ? 600 : 400,
+              }}
+            >
+              <option value={0}>All growth</option>
+              <option value={5}>↗ Growing (5+)</option>
+              <option value={6.5}>↗ Climbing (6.5+)</option>
+              <option value={8}>★ Breakout (8+)</option>
+            </select>
+
             <button
               onClick={() => setShowSources((s) => !s)}
               style={{
@@ -590,13 +678,15 @@ export default function CultureRadarPage() {
             </p>
           </div>
         ) : (() => {
-          // ── Bundle variants under one primary, group by category, render
-          //    every trend as a compact bar. One consistent visual rhythm
-          //    across all views (daily / weekly / inspiration / emerging / all).
           const bundledTrends = bundleTrends(filteredTrends)
           const grouped = groupByCategory(bundledTrends)
+          // Per-country pulse — top 3 in each major Action market.
+          // Only render when no country filter is active and not searching.
+          const showPulse = !country && !search && !vibe && !subculture && minGrowth === 0
           return (
             <div>
+              {showPulse && <CountryPulse trends={bundledTrends} />}
+              {showPulse && <BreakoutPulse trends={bundledTrends} />}
               {grouped.map(({ category: cat, items }) => (
                 <div key={cat} style={{ marginBottom: 24 }}>
                   <CategoryDivider label={cat} count={items.length} />
@@ -972,6 +1062,123 @@ const CATEGORY_LABELS: Record<string, string> = {
   sound: 'Sound',
   format: 'Format',
   sport: 'Sport',
+}
+
+// ── Country pulse: top 3 trends per major Action market ────────────────────
+
+const PULSE_COUNTRIES: Array<{ code: string; flag: string; label: string }> = [
+  { code: 'NL', flag: '🇳🇱', label: 'Netherlands' },
+  { code: 'BE', flag: '🇧🇪', label: 'Belgium' },
+  { code: 'FR', flag: '🇫🇷', label: 'France' },
+  { code: 'DE', flag: '🇩🇪', label: 'Germany' },
+  { code: 'IT', flag: '🇮🇹', label: 'Italy' },
+  { code: 'ES', flag: '🇪🇸', label: 'Spain' },
+]
+
+function CountryPulse({ trends }: { trends: CultureTrend[] }) {
+  // Pick top 3 trends for each country where:
+  //   - trend's countryRelevance contains the country, OR
+  //   - countryRelevance is empty (treat as universal — but de-prioritize)
+  // and the trend is not the SAME across countries (skip pure globals).
+  const perCountry = PULSE_COUNTRIES.map((c) => {
+    const specific = trends.filter((t) => {
+      const cr = t.countryRelevance ?? []
+      // A trend is "country-specific" if it lists 1-6 countries including this one
+      return cr.length > 0 && cr.length <= 6 && cr.includes(c.code as CultureTrend['countryRelevance'][number])
+    })
+    // Rank by daily_rank, then growth, then popularity
+    specific.sort((a, b) => {
+      const ra = a.dailyRank ?? 999
+      const rb = b.dailyRank ?? 999
+      if (ra !== rb) return ra - rb
+      const ga = a.growthScore ?? 0
+      const gb = b.growthScore ?? 0
+      if (ga !== gb) return gb - ga
+      return b.popularityScore - a.popularityScore
+    })
+    return { ...c, top: specific.slice(0, 3) }
+  })
+
+  // Hide pulse if NO country has any specific trends
+  if (perCountry.every((c) => c.top.length === 0)) return null
+
+  return (
+    <div style={{ marginBottom: 28 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0 12px 0' }}>
+        <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 22, letterSpacing: '-0.01em', color: '#000', textTransform: 'uppercase', lineHeight: 1 }}>
+          Country pulse<span style={{ color: '#FF1300' }}>.</span>
+        </span>
+        <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 10, letterSpacing: '0.15em', color: '#6b6b6b', textTransform: 'uppercase' }}>
+          Top trends per major Action market
+        </span>
+        <div style={{ flex: 1, height: 2, background: '#000' }} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+        {perCountry.map((c) => (
+          <div key={c.code} className="jai-card" style={{ padding: 14, background: '#FFFDF3', border: '1px solid #000', minHeight: 140 }}>
+            <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#FF1300' }}>
+              {c.flag} {c.label.toUpperCase()}
+            </p>
+            {c.top.length === 0 ? (
+              <p style={{ margin: '8px 0 0', fontSize: 11, color: '#9ca3af' }}>No country-specific trends yet.</p>
+            ) : (
+              <ol style={{ margin: '8px 0 0 0', padding: '0 0 0 18px' }}>
+                {c.top.map((t) => (
+                  <li key={t.id} style={{ marginBottom: 6, fontSize: 12, lineHeight: 1.4, color: '#1a1a1a' }}>
+                    <strong>{t.name}</strong>
+                    {t.brandBrief?.contentAngle && (
+                      <span style={{ display: 'block', color: '#6b6b6b', fontSize: 11, marginTop: 2 }}>
+                        {t.brandBrief.contentAngle.slice(0, 80)}{t.brandBrief.contentAngle.length > 80 ? '…' : ''}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Breakout pulse: highest growth-score trends regardless of country ─────
+
+function BreakoutPulse({ trends }: { trends: CultureTrend[] }) {
+  const top = trends
+    .filter((t) => (t.growthScore ?? 0) >= 6.5)
+    .sort((a, b) => (b.growthScore ?? 0) - (a.growthScore ?? 0))
+    .slice(0, 6)
+  if (top.length === 0) return null
+
+  return (
+    <div style={{ marginBottom: 28 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '4px 0 12px 0' }}>
+        <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 22, letterSpacing: '-0.01em', color: '#000', textTransform: 'uppercase', lineHeight: 1 }}>
+          Likely to break<span style={{ color: '#FF1300' }}>.</span>
+        </span>
+        <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 10, letterSpacing: '0.15em', color: '#6b6b6b', textTransform: 'uppercase' }}>
+          Predictive growth score 6.5+
+        </span>
+        <div style={{ flex: 1, height: 2, background: '#000' }} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
+        {top.map((t) => (
+          <div key={t.id} className="jai-card" style={{ padding: 12, background: '#000', color: '#FFFDF3', border: '1px solid #FF1300' }}>
+            <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#FF1300' }}>
+              ↗ {t.growthScore?.toFixed(1)}/10 · GROWTH POTENTIAL
+            </p>
+            <p style={{ margin: '6px 0 4px 0', fontFamily: 'var(--font-jai-display)', fontSize: 15, lineHeight: 1.1, textTransform: 'uppercase', letterSpacing: '-0.01em' }}>
+              {t.name}
+            </p>
+            <p style={{ margin: 0, fontSize: 11, color: '#FFFDF3', opacity: 0.7, lineHeight: 1.4 }}>
+              {t.description.slice(0, 110)}{t.description.length > 110 ? '…' : ''}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function CategoryDivider({ label, count }: { label: string; count: number }) {

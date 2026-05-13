@@ -91,6 +91,8 @@ export interface CultureTrend {
   thumbnailMeta: { authorName?: string; authorUrl?: string; title?: string; source?: string } | null
   bundleKey: string | null
   vibe: 'unhinged' | 'aesthetic' | 'humor' | 'wholesome' | 'emotional' | 'informational' | 'product' | 'sport' | null
+  subculture: string | null
+  growthScore: number | null  // 0-10 predictive score: probability this trend grows further
   mindmap: {
     origin: Array<{ label: string; detail?: string; url?: string }>
     spreading: Array<{ label: string; detail?: string; url?: string }>

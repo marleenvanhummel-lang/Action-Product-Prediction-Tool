@@ -92,6 +92,8 @@ interface TrendRowDB {
   thumbnail_meta: { authorName?: string; authorUrl?: string; title?: string; source?: string } | null
   bundle_key: string | null
   vibe: string | null
+  subculture: string | null
+  growth_score: number | null
   mindmap: CultureTrend['mindmap']
 }
 
@@ -416,6 +418,8 @@ export interface ListTrendsArgs {
   category: string | null
   country?: string | null  // ActionCountry code; null = no filter
   vibe?: string | null     // unhinged / aesthetic / humor / wholesome / emotional / informational / product / sport
+  subculture?: string | null
+  minGrowth?: number | null
   limit: number
   includeArchived: boolean
 }
@@ -440,6 +444,14 @@ export async function listTrends(args: ListTrendsArgs): Promise<TrendRowDB[]> {
   if (args.vibe) {
     params.push(args.vibe)
     conditions.push(`vibe = $${params.length}`)
+  }
+  if (args.subculture) {
+    params.push(args.subculture)
+    conditions.push(`subculture = $${params.length}`)
+  }
+  if (args.minGrowth && args.minGrowth > 0) {
+    params.push(args.minGrowth)
+    conditions.push(`growth_score >= $${params.length}`)
   }
 
   let orderBy: string
@@ -473,7 +485,8 @@ export async function listTrends(args: ListTrendsArgs): Promise<TrendRowDB[]> {
             popularity_score, freshness_score, validation_score, reasoning,
             source_ids, source_names, daily_rank, weekly_rank, rank_date,
             rank_week, estimated_views, status, brand_brief, country_relevance,
-            feedback_useful, feedback_generic, thumbnail_meta, mindmap, bundle_key, vibe
+            feedback_useful, feedback_generic, thumbnail_meta, mindmap, bundle_key, vibe,
+            subculture, growth_score
        FROM culture_trends
       WHERE ${conditions.join(' AND ')}
       ORDER BY ${orderBy}
@@ -543,6 +556,8 @@ export function rowToTrend(row: TrendRowDB): CultureTrend {
     thumbnailMeta: row.thumbnail_meta ?? null,
     bundleKey: row.bundle_key ?? null,
     vibe: (row.vibe ?? null) as CultureTrend['vibe'],
+    subculture: row.subculture ?? null,
+    growthScore: row.growth_score ?? null,
     mindmap: row.mindmap ?? null,
   }
 }

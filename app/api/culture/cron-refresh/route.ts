@@ -25,6 +25,9 @@ import { POST as recomputeBundlesHandler } from '@/app/api/culture/recompute-bun
 import { POST as enrichMindmapsHandler } from '@/app/api/culture/enrich-mindmaps/route'
 import { POST as enrichCountriesHandler } from '@/app/api/culture/enrich-countries/route'
 import { POST as enrichVibesHandler } from '@/app/api/culture/enrich-vibes/route'
+import { POST as enrichSubculturesHandler } from '@/app/api/culture/enrich-subcultures/route'
+import { POST as computeGrowthHandler } from '@/app/api/culture/compute-growth/route'
+import { POST as snapshotHandler } from '@/app/api/culture/snapshot-trends/route'
 import { POST as momentsFetchHandler } from '@/app/api/moments/fetch/route'
 import { refreshMomentStatuses } from '@/lib/moments-db'
 import { POST as momentsBriefsHandler } from '@/app/api/moments/backfill-briefs/route'
@@ -247,6 +250,51 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Step 2c4: Subculture classification ──────────────────────────────
+  let subculturesTagged = 0
+  if (!fetchError) {
+    try {
+      const subReq = new NextRequest(new URL('http://internal/api/culture/enrich-subcultures'), {
+        method: 'POST',
+        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
+        body: JSON.stringify({ limit: 60 }),
+      })
+      const r = await enrichSubculturesHandler(subReq)
+      const d = (await r.json()) as { tagged?: number }
+      subculturesTagged = d.tagged ?? 0
+    } catch { /* best-effort */ }
+  }
+
+  // ── Step 2c5: Predictive growth score (pure derivation, ~1s) ─────────
+  let growthScored = 0
+  if (!fetchError) {
+    try {
+      const gReq = new NextRequest(new URL('http://internal/api/culture/compute-growth'), {
+        method: 'POST',
+        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const r = await computeGrowthHandler(gReq)
+      const d = (await r.json()) as { updated?: number }
+      growthScored = d.updated ?? 0
+    } catch { /* best-effort */ }
+  }
+
+  // ── Step 2c6: Nightly trend metric snapshot (timeseries) ──────────────
+  let snapshotsInserted = 0
+  if (!fetchError) {
+    try {
+      const sReq = new NextRequest(new URL('http://internal/api/culture/snapshot-trends'), {
+        method: 'POST',
+        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const r = await snapshotHandler(sReq)
+      const d = (await r.json()) as { inserted?: number }
+      snapshotsInserted = d.inserted ?? 0
+    } catch { /* best-effort */ }
+  }
+
   // ── Step 2d: Mindmap enrichment (Context & connections per trend) ─────
   // One batch of 12 trends per cron run, ranked by daily_rank. The top
   // hero/featured trends get a mindmap within one day of going active.
@@ -309,6 +357,9 @@ export async function GET(req: NextRequest) {
     countriesTagged,
     countriesDropped,
     vibesTagged,
+    subculturesTagged,
+    growthScored,
+    snapshotsInserted,
     isMonthStart,
     momentsError,
     momentsSummary,

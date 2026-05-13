@@ -49,6 +49,9 @@ interface TrendForReport {
   first_seen_at: string
   content_type: string | null
   mindmap: CultureTrend['mindmap']
+  subculture?: string | null
+  vibe?: string | null
+  growth_score?: number | null
 }
 
 interface MomentForReport {
@@ -73,6 +76,9 @@ export interface ReportData {
   emerging: TrendForReport[]
   upcomingMoments: MomentForReport[]
   creators: CreatorForReport[]
+  breakout: TrendForReport[]                // growth_score 7+, predicted to grow
+  bySubculture: Array<{ subculture: string; trends: TrendForReport[] }>
+  byCountry: Array<{ code: string; flag: string; label: string; trends: TrendForReport[] }>
 }
 
 export async function fetchReportData(): Promise<ReportData> {
@@ -82,7 +88,8 @@ export async function fetchReportData(): Promise<ReportData> {
     `SELECT id, name, description, category, popularity_score, daily_rank,
             weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
             brand_brief, source_names, estimated_views, country_relevance,
-            first_seen_at::TEXT AS first_seen_at, content_type, mindmap
+            first_seen_at::TEXT AS first_seen_at, content_type, mindmap,
+            subculture, vibe, growth_score
        FROM culture_trends
       WHERE rank_week = $1 AND status = 'active' AND daily_rank IS NOT NULL
       ORDER BY daily_rank ASC LIMIT 10`,
@@ -93,7 +100,8 @@ export async function fetchReportData(): Promise<ReportData> {
     `SELECT id, name, description, category, popularity_score, daily_rank,
             weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
             brand_brief, source_names, estimated_views, country_relevance,
-            first_seen_at::TEXT AS first_seen_at, content_type, mindmap
+            first_seen_at::TEXT AS first_seen_at, content_type, mindmap,
+            subculture, vibe, growth_score
        FROM culture_trends
       WHERE rank_week = $1 AND status = 'active' AND weekly_rank IS NOT NULL
         AND (daily_rank IS NULL OR daily_rank > 10)
@@ -105,7 +113,8 @@ export async function fetchReportData(): Promise<ReportData> {
     `SELECT id, name, description, category, popularity_score, daily_rank,
             weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
             brand_brief, source_names, estimated_views, country_relevance,
-            first_seen_at::TEXT AS first_seen_at, content_type, mindmap
+            first_seen_at::TEXT AS first_seen_at, content_type, mindmap,
+            subculture, vibe, growth_score
        FROM culture_trends
       WHERE status = 'active'
         AND content_type IN ('format','meme','aesthetic','behavior')
@@ -118,7 +127,8 @@ export async function fetchReportData(): Promise<ReportData> {
     `SELECT id, name, description, category, popularity_score, daily_rank,
             weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
             brand_brief, source_names, estimated_views, country_relevance,
-            first_seen_at::TEXT AS first_seen_at, content_type, mindmap
+            first_seen_at::TEXT AS first_seen_at, content_type, mindmap,
+            subculture, vibe, growth_score
        FROM culture_trends
       WHERE status = 'active' AND popularity_score < 7 AND freshness_score >= 7
       ORDER BY first_seen_at DESC LIMIT 6`,
@@ -139,6 +149,77 @@ export async function fetchReportData(): Promise<ReportData> {
 
   const creators = (await getTodaysCohort()) as CreatorForReport[]
 
+  // Breakout: highest growth_score, sorted desc
+  const breakout = (await sql().query(
+    `SELECT id, name, description, category, popularity_score, daily_rank,
+            weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
+            brand_brief, source_names, estimated_views, country_relevance,
+            first_seen_at::TEXT AS first_seen_at, content_type, mindmap,
+            subculture, vibe, growth_score
+       FROM culture_trends
+      WHERE status = 'active' AND growth_score >= 7
+      ORDER BY growth_score DESC, popularity_score DESC
+      LIMIT 8`,
+  )) as TrendForReport[]
+
+  // By subculture: group trends with subculture tag
+  const subTrends = (await sql().query(
+    `SELECT id, name, description, category, popularity_score, daily_rank,
+            weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
+            brand_brief, source_names, estimated_views, country_relevance,
+            first_seen_at::TEXT AS first_seen_at, content_type, mindmap,
+            subculture, vibe, growth_score
+       FROM culture_trends
+      WHERE status = 'active' AND subculture IS NOT NULL
+      ORDER BY popularity_score DESC, growth_score DESC NULLS LAST
+      LIMIT 80`,
+  )) as TrendForReport[]
+  const subBuckets = new Map<string, TrendForReport[]>()
+  for (const t of subTrends) {
+    if (!t.subculture) continue
+    const list = subBuckets.get(t.subculture) ?? []
+    if (list.length < 4) list.push(t)
+    subBuckets.set(t.subculture, list)
+  }
+  // Only keep subcultures with 2+ trends
+  const bySubculture = Array.from(subBuckets.entries())
+    .filter(([, ts]) => ts.length >= 2)
+    .map(([subculture, trends]) => ({ subculture, trends }))
+    .sort((a, b) => b.trends.length - a.trends.length)
+    .slice(0, 6)
+
+  // By country: top 4 trends per major Action market that's country-specific
+  const REPORT_COUNTRIES: Array<{ code: string; flag: string; label: string }> = [
+    { code: 'NL', flag: '🇳🇱', label: 'Netherlands' },
+    { code: 'BE', flag: '🇧🇪', label: 'Belgium' },
+    { code: 'FR', flag: '🇫🇷', label: 'France' },
+    { code: 'DE', flag: '🇩🇪', label: 'Germany' },
+    { code: 'IT', flag: '🇮🇹', label: 'Italy' },
+    { code: 'ES', flag: '🇪🇸', label: 'Spain' },
+  ]
+  const byCountry = await Promise.all(
+    REPORT_COUNTRIES.map(async (c) => {
+      const trends = (await sql().query(
+        `SELECT id, name, description, category, popularity_score, daily_rank,
+                weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
+                brand_brief, source_names, estimated_views, country_relevance,
+                first_seen_at::TEXT AS first_seen_at, content_type, mindmap,
+                subculture, vibe, growth_score
+           FROM culture_trends
+          WHERE status = 'active'
+            AND country_relevance IS NOT NULL
+            AND cardinality(country_relevance) BETWEEN 1 AND 6
+            AND $1::text = ANY(country_relevance)
+          ORDER BY COALESCE(daily_rank, 999) ASC,
+                   COALESCE(growth_score, 0) DESC,
+                   popularity_score DESC
+          LIMIT 4`,
+        [c.code],
+      )) as TrendForReport[]
+      return { ...c, trends }
+    }),
+  )
+
   return {
     generatedAt: new Date().toISOString(),
     week,
@@ -148,6 +229,9 @@ export async function fetchReportData(): Promise<ReportData> {
     emerging,
     upcomingMoments,
     creators,
+    breakout,
+    bySubculture,
+    byCountry: byCountry.filter((c) => c.trends.length > 0),
   }
 }
 
@@ -382,6 +466,177 @@ function renderMomentRow(m: MomentForReport): string {
 </tr>`
 }
 
+// ── Breakout section: highest growth_score, predictive ──────────────────
+
+function renderBreakoutSection(trends: TrendForReport[]): string {
+  return `
+<tr><td style="background:#FFFDF3;height:32px;"></td></tr>
+<tr>
+  <td style="padding:24px 40px 8px;background:#000;border-top:6px solid #FF1300;">
+    <table cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td style="background:#FF1300;color:#FFFDF3;padding:4px 10px;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;font-weight:900;">↗</td>
+        <td width="12">&nbsp;</td>
+        <td><p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#FFFDF3;">Predictive · growth score 7+</p></td>
+      </tr>
+    </table>
+    <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#FFFDF3;text-transform:uppercase;letter-spacing:-0.02em;">↗ Likely to<br/><span style="color:#FF1300;">break next.</span></h2>
+    <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#FFFDF3;opacity:0.7;">Trends our predictor thinks will grow in the next 14 days. Composite of freshness, cross-platform validation, age-window and subculture proximity.</p>
+  </td>
+</tr>
+<tr><td style="padding:0 40px 24px;background:#000;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%">
+    ${trends.map(renderBreakoutCard).join('')}
+  </table>
+</td></tr>`
+}
+
+function renderBreakoutCard(t: TrendForReport): string {
+  const color = CATEGORY_COLOR[t.category] ?? '#FF1300'
+  const emoji = CATEGORY_EMOJI[t.category] ?? '🔥'
+  const score = (t.growth_score ?? 0).toFixed(1)
+  return `
+<tr><td style="padding:0 0 14px 0;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#1a1a1a;border:1px solid #FF1300;">
+    <tr>
+      ${t.thumbnail_url
+        ? `<td width="120" valign="top" style="padding:0;background:#000;">
+            <img src="${escapeHtml(t.thumbnail_url)}" alt="" width="120" style="display:block;width:120px;height:120px;object-fit:cover;border:0;" />
+          </td>`
+        : `<td width="120" valign="middle" style="padding:0;width:120px;height:120px;background:linear-gradient(135deg,${color}55,${color}99);text-align:center;">
+            <div style="font-family:'Archivo Black',sans-serif;font-size:54px;color:#FFFDF3;opacity:0.4;">${emoji}</div>
+          </td>`}
+      <td valign="top" style="padding:12px 16px;">
+        <p style="margin:0 0 6px 0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.15em;color:#FF1300;text-transform:uppercase;">↗ ${score} / 10 · ${escapeHtml(t.category).toUpperCase()}</p>
+        <h3 style="margin:0;font-family:'Archivo Black',sans-serif;font-size:18px;line-height:1.1;color:#FFFDF3;text-transform:uppercase;letter-spacing:-0.01em;">${escapeHtml(t.name)}</h3>
+        <p style="margin:6px 0 0 0;font-family:'Inter',sans-serif;font-size:12px;line-height:1.4;color:#FFFDF3;opacity:0.7;">${escapeHtml(t.description.slice(0, 200))}${t.description.length > 200 ? '…' : ''}</p>
+        ${t.brand_brief?.contentAngle ? `<p style="margin:8px 0 0 0;font-family:'Inter',sans-serif;font-size:11px;color:#FF1300;"><strong>ANGLE:</strong> <span style="color:#FFFDF3;opacity:0.85;">${escapeHtml(t.brand_brief.contentAngle.slice(0, 140))}</span></p>` : ''}
+      </td>
+    </tr>
+  </table>
+</td></tr>`
+}
+
+// ── Country pulse: top 4 per major Action market ────────────────────────
+
+function renderCountryPulseSection(byCountry: ReportData['byCountry']): string {
+  return `
+<tr><td style="background:#FFFDF3;height:32px;"></td></tr>
+<tr>
+  <td style="padding:24px 40px 8px;background:#FFFDF3;border-top:2px solid #000;">
+    <table cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td style="background:#000;color:#FFFDF3;padding:4px 10px;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;font-weight:900;">🌍</td>
+        <td width="12">&nbsp;</td>
+        <td><p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#000;">Country pulse</p></td>
+      </tr>
+    </table>
+    <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">🌍 What's<br/><span style="color:#FF1300;">trending where.</span></h2>
+    <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Country-specifieke trends per Action markt. Sluit globale trends uit.</p>
+  </td>
+</tr>
+<tr><td style="padding:0 40px;background:#FFFDF3;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%">
+    ${byCountry.map((c) => `
+    <tr>
+      <td style="padding:0 0 12px 0;">
+        <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#FAF6E6;border:1px solid #000;border-left:6px solid #FF1300;">
+          <tr>
+            <td width="120" valign="top" style="padding:14px;background:#000;text-align:center;">
+              <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1;">${c.flag}</p>
+              <p style="margin:6px 0 0 0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.15em;color:#FFFDF3;text-transform:uppercase;">${escapeHtml(c.code)}</p>
+              <p style="margin:2px 0 0 0;font-family:'Inter',sans-serif;font-size:9px;color:#FFFDF3;opacity:0.6;">${escapeHtml(c.label)}</p>
+            </td>
+            <td valign="top" style="padding:10px 14px;">
+              <ol style="margin:0;padding:0 0 0 18px;">
+                ${c.trends.map((t) => `
+                  <li style="margin-bottom:8px;font-size:12px;line-height:1.4;color:#1a1a1a;">
+                    <strong>${escapeHtml(t.name)}</strong>
+                    ${t.brand_brief?.contentAngle ? `<span style="display:block;color:#6b6b6b;font-size:11px;margin-top:2px;">${escapeHtml(t.brand_brief.contentAngle.slice(0, 110))}${t.brand_brief.contentAngle.length > 110 ? '…' : ''}</span>` : ''}
+                  </li>
+                `).join('')}
+              </ol>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>`).join('')}
+  </table>
+</td></tr>`
+}
+
+// ── Subculture pulse: trends grouped by subculture ──────────────────────
+
+const SUBCULTURE_LABELS_REPORT: Record<string, string> = {
+  cottagecore: '🌾 Cottagecore', dark_academia: '📚 Dark Academia',
+  clean_girl: '✨ Clean Girl', mob_wife: '💎 Mob Wife',
+  coquette: '🎀 Coquette', balletcore: '🩰 Balletcore',
+  weirdcore: '🌀 Weirdcore', kidcore: '🧸 Kidcore', y2k: '💿 Y2K',
+  alt_fashion: '⛓ Alt Fashion', gorpcore: '🥾 Gorpcore',
+  italian_brainrot: '🍝 Italian Brainrot',
+  gen_alpha_brainrot: '🧠 Gen Alpha Brainrot',
+  ohio_culture: '🌽 Ohio Culture',
+  ironic_seriousness: '🤔 Ironic Seriousness',
+  foodtok: '🍴 FoodTok', beautytok: '💄 BeautyTok',
+  fittok: '💪 FitTok', hometok: '🏠 HomeTok',
+  booktok: '📖 BookTok', traveltok: '✈️ TravelTok',
+  gaming_fandom: '🎮 Gaming', kpop_fandom: '💖 K-Pop',
+  anime_otaku: '🌸 Anime', stan_culture: '⭐ Stan',
+  tradwife: '🥧 Tradwife', that_girl: '🌅 That Girl',
+  sleepmaxxing: '😴 Sleepmaxxing', lookmax: '💪 Lookmaxxing',
+  dimes_square: '🗽 Dimes Square',
+  hyperpop: '🎵 Hyperpop', indie_sleaze_revival: '🍷 Indie Sleaze',
+  sad_girl_pop: '🥀 Sad Girl Pop',
+}
+
+function renderSubcultureSection(bySubculture: ReportData['bySubculture']): string {
+  return `
+<tr><td style="background:#FFFDF3;height:32px;"></td></tr>
+<tr>
+  <td style="padding:24px 40px 8px;background:#FFFDF3;border-top:2px solid #000;">
+    <table cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td style="background:#000;color:#FFFDF3;padding:4px 10px;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;font-weight:900;">◇</td>
+        <td width="12">&nbsp;</td>
+        <td><p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#000;">Subculture pulse</p></td>
+      </tr>
+    </table>
+    <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">◇ This week<br/><span style="color:#FF1300;">in subcultures.</span></h2>
+    <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Wat er gebeurt in de hoeken van het internet die we volgen.</p>
+  </td>
+</tr>
+<tr><td style="padding:0 40px;background:#FFFDF3;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%">
+    ${bySubculture.map((b) => `
+    <tr>
+      <td style="padding:0 0 14px 0;">
+        <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#FFFDF3;border:1px solid #000;">
+          <tr>
+            <td style="background:#000;padding:8px 14px;">
+              <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:14px;color:#FFFDF3;text-transform:uppercase;letter-spacing:0.05em;">${escapeHtml(SUBCULTURE_LABELS_REPORT[b.subculture] ?? b.subculture)}<span style="color:#FF1300;"> · ${b.trends.length}</span></p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:12px 14px;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%">
+                ${b.trends.map((t) => `
+                <tr>
+                  <td valign="top" style="padding:6px 0;border-bottom:1px solid #00000010;">
+                    <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:13px;color:#000;line-height:1.2;">${escapeHtml(t.name)}</p>
+                    <p style="margin:3px 0 0 0;font-family:'Inter',sans-serif;font-size:11px;color:#6b6b6b;line-height:1.4;">${escapeHtml(t.description.slice(0, 140))}${t.description.length > 140 ? '…' : ''}</p>
+                  </td>
+                </tr>
+                `).join('')}
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>`).join('')}
+  </table>
+</td></tr>`
+}
+
 export function renderReportHtml(data: ReportData): string {
   const dateLabel = formatDate(data.generatedAt)
   const totalTrends = data.dailyTop10.length + data.weeklyTop20.length + data.inspiration.length + data.emerging.length
@@ -463,7 +718,7 @@ export function renderReportHtml(data: ReportData): string {
                 </td>
                 <td valign="top" style="padding-left:24px;border-left:2px solid #000;">
                   <p style="margin:0;font-family:'Newsreader',Georgia,serif;font-size:18px;line-height:1.55;color:#000;font-weight:400;">
-                    Vandaag staan er <strong>${data.dailyTop10.length} trends</strong> bovenaan, <strong>${data.inspiration.length} formats</strong> om direct over te nemen, <strong>${data.emerging.length} signalen</strong> die nog klein zijn maar snel stijgen, <strong>${data.creators.length} creators</strong> om te volgen, en <strong>${data.upcomingMoments.length} moments</strong> die in de komende drie weken vallen.
+                    Vandaag staan er <strong>${data.dailyTop10.length} trends</strong> bovenaan, <strong>${data.breakout.length} signalen</strong> die onze predictor verwacht binnen 14 dagen door te breken, <strong>${data.byCountry.length} landen</strong> met eigen pulse, en <strong>${data.bySubculture.length} actieve subcultures</strong>. Plus <strong>${data.inspiration.length} formats</strong> om over te nemen, <strong>${data.creators.length} creators</strong> om te volgen, en <strong>${data.upcomingMoments.length} moments</strong> in de komende drie weken.
                   </p>
                   <p style="margin:12px 0 0 0;font-family:'Inter',sans-serif;font-size:12px;color:#6b6b6b;">
                     Klik op een trend om de bron te openen. Sounds met <strong style="color:#FF1300;">✓ SAFE</strong> zijn rechtenvrij te gebruiken op Action's TikTok Business Account.
@@ -493,6 +748,12 @@ export function renderReportHtml(data: ReportData): string {
             ${data.dailyTop10.map((t) => renderTrendCard(t, { showRank: true })).join('')}
           </table>
         </td></tr>
+
+        ${data.breakout.length > 0 ? renderBreakoutSection(data.breakout) : ''}
+
+        ${data.byCountry.length > 0 ? renderCountryPulseSection(data.byCountry) : ''}
+
+        ${data.bySubculture.length > 0 ? renderSubcultureSection(data.bySubculture) : ''}
 
         ${data.inspiration.length > 0 ? `
         <!-- INSPIRATION -->

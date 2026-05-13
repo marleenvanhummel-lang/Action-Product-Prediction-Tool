@@ -25,6 +25,9 @@ export async function GET(req: Request) {
   const category = searchParams.get('category')
   const country = searchParams.get('country')?.toUpperCase() || null
   const vibe = searchParams.get('vibe')?.toLowerCase() || null
+  const subculture = searchParams.get('subculture')?.toLowerCase() || null
+  const minGrowthRaw = searchParams.get('minGrowth')
+  const minGrowth = minGrowthRaw ? Number(minGrowthRaw) : null
   const week = searchParams.get('week') ?? isoWeek()
   const limit = Math.min(Number(searchParams.get('limit') ?? '100'), 200)
   const includeArchived = searchParams.get('includeArchived') === '1'
@@ -36,6 +39,8 @@ export async function GET(req: Request) {
       category,
       country,
       vibe,
+      subculture,
+      minGrowth,
       limit,
       includeArchived,
     })
