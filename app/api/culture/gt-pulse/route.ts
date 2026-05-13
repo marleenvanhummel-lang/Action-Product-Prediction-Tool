@@ -112,6 +112,52 @@ export async function GET(_req: NextRequest) {
     })
     .slice(0, 20)  // cap before Gemini call
 
+  // Build the set of titles we WANT to interpret:
+  //   - All multi-country titles
+  //   - Top 3 per country (catches NL-only celebrity spikes like
+  //     "joling & gordon over de vloer")
+  //   - Anything that's "new today" with rank ≤ 5
+  // Dedup by title_normalized so one Gemini batch covers all.
+  const wantToInterpret = new Map<string, {
+    title: string
+    countryCount: number
+    geos: string[]
+    relatedQueries: string[]
+    articles: Array<{ title: string; url: string; source: string | null }>
+  }>()
+
+  for (const m of multiCountryBase) {
+    wantToInterpret.set(normalize(m.title), {
+      title: m.title,
+      countryCount: m.countryCount,
+      geos: m.geos.map((g) => g.geo),
+      relatedQueries: m.relatedQueries,
+      articles: m.articles,
+    })
+  }
+
+  // Top 3 per country
+  const byGeoForInterpret = new Map<string, SnapshotRow[]>()
+  for (const r of today) {
+    const list = byGeoForInterpret.get(r.geo) ?? []
+    if (list.length < 3) list.push(r)
+    byGeoForInterpret.set(r.geo, list)
+  }
+  for (const [geo, items] of byGeoForInterpret) {
+    for (const r of items) {
+      const key = r.title_normalized
+      if (!wantToInterpret.has(key)) {
+        wantToInterpret.set(key, {
+          title: r.title,
+          countryCount: 1,
+          geos: [geo],
+          relatedQueries: (r.related_queries ?? []).slice(0, 6),
+          articles: (r.articles ?? []).slice(0, 4),
+        })
+      }
+    }
+  }
+
   // ── Layer Gemini interpretations on top (cached per day per title) ──
   await sql().query(`
     CREATE TABLE IF NOT EXISTS culture_gt_interpretations (
@@ -135,15 +181,11 @@ export async function GET(_req: NextRequest) {
   )) as Array<{ title_normalized: string; why_now: string | null; category: string | null; action_relevance: string | null; action_angle: string | null }>
   const cacheMap = new Map(cached.map((c) => [c.title_normalized, c]))
 
-  const needsInterpret = multiCountryBase.filter((m) => !cacheMap.has(normalize(m.title)))
+  const needsInterpret = Array.from(wantToInterpret.values()).filter(
+    (m) => !cacheMap.has(normalize(m.title)),
+  )
   if (needsInterpret.length > 0) {
-    const fresh = await interpretGtTrends(needsInterpret.map((m) => ({
-      title: m.title,
-      countryCount: m.countryCount,
-      geos: m.geos.map((g) => g.geo),
-      relatedQueries: m.relatedQueries,
-      articles: m.articles,
-    })))
+    const fresh = await interpretGtTrends(needsInterpret)
     for (const f of fresh) {
       const key = normalize(f.title)
       await sql().query(
@@ -227,6 +269,49 @@ export async function GET(_req: NextRequest) {
     })),
   }))
 
+  // 5) Country spikes: per country, rich card for the #1 spike — with
+  //    Gemini interpretation if available. This is what surfaces
+  //    NL-only celebrity spikes like "joling & gordon over de vloer".
+  const countrySpikes: Array<{
+    geo: string
+    title: string
+    rank: number
+    traffic: string | null
+    trafficValue: number | null
+    articles: Array<{ title: string; url: string; source: string | null }>
+    relatedQueries: string[]
+    whyNow: string | null
+    category: string | null
+    actionRelevance: string | null
+    actionAngle: string | null
+  }> = []
+  for (const [geo, items] of byGeo) {
+    const top = items[0]
+    if (!top) continue
+    const c = cacheMap.get(top.title_normalized)
+    countrySpikes.push({
+      geo,
+      title: top.title,
+      rank: top.rank,
+      traffic: top.traffic,
+      trafficValue: top.traffic_value,
+      articles: (top.articles ?? []).slice(0, 3),
+      relatedQueries: (top.related_queries ?? []).slice(0, 5),
+      whyNow: c?.why_now ?? null,
+      category: c?.category ?? null,
+      actionRelevance: c?.action_relevance ?? null,
+      actionAngle: c?.action_angle ?? null,
+    })
+  }
+  // Sort by Action relevance (high first), then by traffic_value desc
+  const relRank: Record<string, number> = { high: 0, medium: 1, low: 2, none: 3 }
+  countrySpikes.sort((a, b) => {
+    const ra = relRank[a.actionRelevance ?? 'low'] ?? 2
+    const rb = relRank[b.actionRelevance ?? 'low'] ?? 2
+    if (ra !== rb) return ra - rb
+    return (b.trafficValue ?? 0) - (a.trafficValue ?? 0)
+  })
+
   return NextResponse.json({
     ok: true,
     snapshotDate: todayStr ?? null,
@@ -234,5 +319,6 @@ export async function GET(_req: NextRequest) {
     newToday: newToday.slice(0, 30),
     risingFast: risingFast.slice(0, 20),
     topByCountry,
+    countrySpikes,
   })
 }

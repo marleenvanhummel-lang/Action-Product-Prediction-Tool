@@ -1085,6 +1085,18 @@ interface GtPulseData {
   newToday: Array<{ title: string; geo: string; rank: number; articles: Array<{ title: string; url: string; source: string | null }> | null }>
   risingFast: Array<{ title: string; geo: string; rankToday: number; rankYesterday: number; delta: number }>
   topByCountry: Array<{ geo: string; items: Array<{ rank: number; title: string; traffic: string | null }> }>
+  countrySpikes?: Array<{
+    geo: string
+    title: string
+    rank: number
+    traffic: string | null
+    articles: Array<{ title: string; url: string; source: string | null }>
+    relatedQueries: string[]
+    whyNow: string | null
+    category: string | null
+    actionRelevance: string | null
+    actionAngle: string | null
+  }>
 }
 
 function GoogleTrendsPulse() {
@@ -1234,6 +1246,111 @@ function GoogleTrendsPulse() {
           </div>
         )}
       </div>
+
+      {/* Country spikes — rich cards with article context + Gemini why-now */}
+      {data.countrySpikes && data.countrySpikes.length > 0 && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '24px 0 12px 0' }}>
+            <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 16, letterSpacing: '0.02em', color: '#000', textTransform: 'uppercase' }}>
+              Today's country spikes
+            </span>
+            <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.15em', color: '#6b6b6b', textTransform: 'uppercase' }}>
+              Top spike per market · interpreted
+            </span>
+            <div style={{ flex: 1, height: 1, background: '#00000020' }} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 10 }}>
+            {data.countrySpikes.slice(0, 14).map((s, i) => {
+              const isHigh = s.actionRelevance === 'high'
+              const hasThumb = s.articles[0]?.url
+              return (
+                <div
+                  key={i}
+                  className="jai-card"
+                  style={{
+                    padding: 0,
+                    background: '#FFFDF3',
+                    border: isHigh ? '1px solid #FF1300' : '1px solid #00000020',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div style={{ padding: '10px 12px', background: '#000', color: '#FFFDF3', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 16 }}>{flag(s.geo)}</span>
+                    <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 10, letterSpacing: '0.15em' }}>{s.geo} · #{s.rank}</span>
+                    {s.traffic && <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#FF1300' }}>📊 {s.traffic}</span>}
+                  </div>
+                  <div style={{ padding: 12 }}>
+                    <p style={{ margin: 0, fontFamily: 'var(--font-jai-display)', fontSize: 15, lineHeight: 1.15, color: '#000', textTransform: 'uppercase', letterSpacing: '-0.01em' }}>
+                      {s.title}
+                    </p>
+                    <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                      {s.category && (
+                        <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 8, letterSpacing: '0.1em', padding: '1px 5px', background: '#000', color: '#FFFDF3', textTransform: 'uppercase' }}>
+                          {s.category}
+                        </span>
+                      )}
+                      {s.actionRelevance && s.actionRelevance !== 'none' && (
+                        <span
+                          style={{
+                            fontFamily: 'var(--font-jai-display)',
+                            fontSize: 8,
+                            letterSpacing: '0.1em',
+                            padding: '1px 5px',
+                            background: s.actionRelevance === 'high' ? '#FF1300' : s.actionRelevance === 'medium' ? '#FFE4E0' : 'transparent',
+                            color: s.actionRelevance === 'high' ? '#FFFDF3' : s.actionRelevance === 'medium' ? '#FF1300' : '#9ca3af',
+                            textTransform: 'uppercase',
+                            border: s.actionRelevance === 'low' ? '1px solid #00000020' : 'none',
+                          }}
+                        >
+                          ACTION {s.actionRelevance}
+                        </span>
+                      )}
+                    </div>
+                    {s.whyNow && (
+                      <p style={{ margin: '8px 0 0 0', fontSize: 12, lineHeight: 1.4, color: '#1a1a1a' }}>
+                        {s.whyNow}
+                      </p>
+                    )}
+                    {s.actionAngle && (
+                      <p style={{ margin: '8px 0 0 0', fontSize: 11, lineHeight: 1.4, color: '#000', background: '#FFE4E0', borderLeft: '3px solid #FF1300', padding: '6px 8px' }}>
+                        <strong style={{ fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#FF1300' }}>ANGLE: </strong>
+                        {s.actionAngle}
+                      </p>
+                    )}
+                    {hasThumb && (
+                      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {s.articles.slice(0, 2).map((a, ai) => (
+                          <a
+                            key={ai}
+                            href={a.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{
+                              fontSize: 11,
+                              color: '#1a1a1a',
+                              textDecoration: 'none',
+                              padding: '4px 6px',
+                              background: '#FAF6E6',
+                              borderLeft: '2px solid #000',
+                              display: 'block',
+                              lineHeight: 1.3,
+                            }}
+                            title={a.title}
+                          >
+                            <span style={{ color: '#FF1300', fontFamily: 'var(--font-jai-display)', fontSize: 8, letterSpacing: '0.1em', marginRight: 4 }}>→</span>
+                            {a.title.slice(0, 80)}{a.title.length > 80 ? '…' : ''}
+                            {a.source && <span style={{ display: 'block', color: '#6b6b6b', fontSize: 9, marginTop: 1 }}>{a.source}</span>}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
     </div>
   )
 }
