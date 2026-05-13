@@ -45,7 +45,7 @@ export async function GET(_req: NextRequest) {
     `SELECT geo, snapshot_date::TEXT AS snapshot_date, rank, title, title_normalized,
             traffic, traffic_value, related_queries, articles
        FROM culture_gt_snapshots
-      WHERE snapshot_date IN (CURRENT_DATE, CURRENT_DATE - INTERVAL '1 day')
+      WHERE snapshot_date >= CURRENT_DATE - INTERVAL '3 days'
       ORDER BY geo, snapshot_date DESC, rank ASC`,
   )) as SnapshotRow[]
 
