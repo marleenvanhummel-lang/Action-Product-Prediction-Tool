@@ -610,7 +610,14 @@ export function CompactTrend({ trend }: { trend: TrendWithVariants }) {
             {trend.feedbackUseful > 0 && <span style={{ fontSize: 10, color: '#047857' }}>👍 {trend.feedbackUseful}</span>}
           </div>
           <h4 style={{ margin: '4px 0 2px 0', fontFamily: 'var(--font-jai-display)', fontSize: 16, lineHeight: 1.1, color: '#000', textTransform: 'uppercase', letterSpacing: '-0.01em' }}>
-            {trend.name}
+            <a
+              href={`/culture-radar/trends/${trend.slug}`}
+              onClick={(e) => e.stopPropagation()}
+              style={{ color: '#000', textDecoration: 'none' }}
+              title="Open trend detail page"
+            >
+              {trend.name}
+            </a>
           </h4>
           <p style={{ margin: 0, fontSize: 12, color: '#4a4a4a', lineHeight: 1.4 }}>
             {expanded ? trend.description : `${trend.description.slice(0, 160)}${trend.description.length > 160 ? '…' : ''}`}

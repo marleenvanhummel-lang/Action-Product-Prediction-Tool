@@ -31,6 +31,8 @@ import { POST as computeGrowthHandler } from '@/app/api/culture/compute-growth/r
 import { POST as snapshotHandler } from '@/app/api/culture/snapshot-trends/route'
 import { POST as snapshotGtHandler } from '@/app/api/culture/snapshot-gt/route'
 import { POST as verifyTrendsHandler } from '@/app/api/culture/verify-trends/route'
+import { POST as embedHandler } from '@/app/api/culture/embed/route'
+import { POST as lifecycleHandler } from '@/app/api/culture/compute-lifecycle/route'
 import { POST as momentsFetchHandler } from '@/app/api/moments/fetch/route'
 import { refreshMomentStatuses } from '@/lib/moments-db'
 import { POST as momentsBriefsHandler } from '@/app/api/moments/backfill-briefs/route'
@@ -331,6 +333,21 @@ export async function GET(req: NextRequest) {
     } catch { /* best-effort */ }
   }
 
+  // ── Step 2c5b: Trend embeddings (semantic vectors for clustering) ────
+  let embedsAdded = 0
+  if (!fetchError) {
+    try {
+      const eReq = new NextRequest(new URL('http://internal/api/culture/embed'), {
+        method: 'POST',
+        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
+        body: JSON.stringify({ limit: 80 }),
+      })
+      const r = await embedHandler(eReq)
+      const d = (await r.json()) as { embedded?: number }
+      embedsAdded = d.embedded ?? 0
+    } catch { /* best-effort */ }
+  }
+
   // ── Step 2c6: Nightly trend metric snapshot (timeseries) ──────────────
   let snapshotsInserted = 0
   if (!fetchError) {
@@ -358,6 +375,21 @@ export async function GET(req: NextRequest) {
       const r = await snapshotGtHandler(gtReq)
       const d = (await r.json()) as { inserted?: number }
       gtItemsSnapped = d.inserted ?? 0
+    } catch { /* best-effort */ }
+  }
+
+  // ── Step 2c8: Lifecycle stage detection from snapshot timeseries ─────
+  let lifecyclesComputed = 0
+  if (!fetchError) {
+    try {
+      const lReq = new NextRequest(new URL('http://internal/api/culture/compute-lifecycle'), {
+        method: 'POST',
+        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const r = await lifecycleHandler(lReq)
+      const d = (await r.json()) as { updated?: number }
+      lifecyclesComputed = d.updated ?? 0
     } catch { /* best-effort */ }
   }
 
@@ -428,6 +460,8 @@ export async function GET(req: NextRequest) {
     trendsArchived,
     snapshotsInserted,
     gtItemsSnapped,
+    embedsAdded,
+    lifecyclesComputed,
     isMonthStart,
     momentsError,
     momentsSummary,
