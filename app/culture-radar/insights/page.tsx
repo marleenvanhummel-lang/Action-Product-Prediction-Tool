@@ -10,6 +10,8 @@ interface Cluster {
   avgGrowth: number
   dominantSubculture: string | null
   dominantVibe: string | null
+  label?: string | null
+  summary?: string | null
   members: Array<{ id: string; name: string; description: string }>
 }
 
@@ -83,8 +85,13 @@ export default function InsightsPage() {
                   {clusters.clusters.map((c, i) => (
                     <div key={i} className="jai-card" style={{ padding: 14, background: '#FFFDF3', border: '1px solid #00000020' }}>
                       <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#FF1300' }}>
-                        CLUSTER #{i + 1} · {c.size} TRENDS
+                        {c.label ? `◆ ${c.label.toUpperCase()}` : `CLUSTER #${i + 1}`} · {c.size} TRENDS
                       </p>
+                      {c.summary && (
+                        <p className="jai-serif" style={{ margin: '6px 0 4px', fontSize: 13, lineHeight: 1.4, color: '#000' }}>
+                          {c.summary}
+                        </p>
+                      )}
                       <p style={{ margin: '4px 0 8px', fontSize: 11, color: '#6b6b6b' }}>
                         {c.dominantSubculture && <>◇ {c.dominantSubculture} · </>}
                         {c.dominantVibe && <>{c.dominantVibe} · </>}

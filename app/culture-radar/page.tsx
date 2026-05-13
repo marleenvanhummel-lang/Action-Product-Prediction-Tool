@@ -354,6 +354,13 @@ export default function CultureRadarPage() {
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <a
+              href="/culture-radar/insights"
+              className="jai-btn jai-btn-outline"
+              style={{ borderColor: '#FFFDF3', color: '#FFFDF3', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              🧬 Insights →
+            </a>
+            <a
               href="/culture-radar/report"
               target="_blank"
               rel="noreferrer"
