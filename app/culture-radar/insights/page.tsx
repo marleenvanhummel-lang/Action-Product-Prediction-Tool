@@ -35,26 +35,66 @@ interface SourceHealth {
   healthGrade: 'A' | 'B' | 'C' | 'D' | 'F'
 }
 
+interface CrossPlatformResp {
+  totalAnalyzed: number
+  byPlatform: Record<string, number>
+  platformPairs: Array<{ pair: string; count: number }>
+  multiPlatformTrends: Array<{ id: string; slug: string; name: string; platforms: string[]; platformCount: number; growth: number | null }>
+  newsletterOnly: Array<{ id: string; slug: string; name: string; firstSeenAt: string }>
+}
+
+interface ReverseDiscoverMatch {
+  id: string; slug: string; name: string; description: string
+  category: string; popularity: number; growth: number | null
+  lifecycleStage: string | null; vibe: string | null; subculture: string | null
+  actionAngle: string | null; actionRelevance: string | null
+  productCategories: string[]; fitScore: number; compositeScore: number
+}
+
 export default function InsightsPage() {
   const [clusters, setClusters] = useState<ClusterResp | null>(null)
   const [subcultures, setSubcultures] = useState<SubcultureTraj[]>([])
   const [sources, setSources] = useState<SourceHealth[]>([])
+  const [crossPlatform, setCrossPlatform] = useState<CrossPlatformResp | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // Reverse discovery state
+  const [rdQuery, setRdQuery] = useState('')
+  const [rdMatches, setRdMatches] = useState<ReverseDiscoverMatch[]>([])
+  const [rdLoading, setRdLoading] = useState(false)
 
   useEffect(() => {
     Promise.all([
       apiFetch('/api/culture/clusters?k=12&freshOnly=1').then((r) => r.json()),
       apiFetch('/api/culture/subculture-trajectory').then((r) => r.json()),
       apiFetch('/api/culture/source-health').then((r) => r.json()),
-    ]).then(([c, s, src]) => {
+      apiFetch('/api/culture/cross-platform-velocity').then((r) => r.json()),
+    ]).then(([c, s, src, cp]) => {
       setClusters(c)
       setSubcultures(s.subcultures ?? [])
       setSources(src.sources ?? [])
+      setCrossPlatform(cp)
       setLoading(false)
     }).catch((e) => {
       console.error(e); setLoading(false)
     })
   }, [])
+
+  async function runReverseDiscover() {
+    if (!rdQuery.trim()) return
+    setRdLoading(true)
+    try {
+      const r = await apiFetch('/api/culture/reverse-discover', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ category: rdQuery.trim(), limit: 16 }),
+      })
+      const d = await r.json()
+      setRdMatches(d.matches ?? [])
+    } finally {
+      setRdLoading(false)
+    }
+  }
 
   return (
     <div className="jai-app" style={{ minHeight: '100vh' }}>
@@ -122,6 +162,148 @@ export default function InsightsPage() {
                 </div>
               )}
             </Section>
+
+            {/* Reverse discovery */}
+            <Section title="Reverse discovery" subtitle="Type an Action product category (e.g. 'home cleaning', 'kids back to school', 'beauty essentials'). Returns the trends best matched to that category, ranked by fit + growth + urgency.">
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                <input
+                  value={rdQuery}
+                  onChange={(e) => setRdQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') runReverseDiscover() }}
+                  placeholder="e.g. home cleaning, kids toys, beauty essentials…"
+                  style={{
+                    flex: '1 1 280px', minWidth: 200, padding: '10px 14px',
+                    fontFamily: 'var(--font-body)', fontSize: 13,
+                    border: '1px solid #00000020', background: '#FFFDF3',
+                  }}
+                />
+                <button
+                  onClick={runReverseDiscover}
+                  disabled={rdLoading || !rdQuery.trim()}
+                  className="jai-btn jai-btn-red"
+                  style={{ minWidth: 140 }}
+                >
+                  {rdLoading ? 'Searching…' : 'Find trends →'}
+                </button>
+                {['Home cleaning', 'Kids toys', 'Beauty essentials', 'Garden', 'Back to school', 'Halloween decor'].map((p) => (
+                  <button key={p} onClick={() => { setRdQuery(p); setTimeout(runReverseDiscover, 50) }} style={{ background: 'transparent', border: '1px solid #00000020', padding: '4px 10px', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-jai-display)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                    {p}
+                  </button>
+                ))}
+              </div>
+              {rdMatches.length > 0 && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 10 }}>
+                  {rdMatches.map((m) => (
+                    <a key={m.id} href={`/culture-radar/trends/${m.slug}`} style={{ textDecoration: 'none' }}>
+                      <div className="jai-card" style={{ padding: 12, background: '#FFFDF3', border: '1px solid #00000020', cursor: 'pointer' }}>
+                        <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#FF1300' }}>
+                          FIT {m.fitScore} · SCORE {m.compositeScore} · {m.category}
+                        </p>
+                        <p style={{ margin: '4px 0 4px', fontFamily: 'var(--font-jai-display)', fontSize: 15, color: '#000', textTransform: 'uppercase', letterSpacing: '-0.01em', lineHeight: 1.15 }}>
+                          {m.name}
+                        </p>
+                        <p style={{ margin: 0, fontSize: 12, color: '#1a1a1a', lineHeight: 1.4 }}>
+                          {m.description.slice(0, 160)}{m.description.length > 160 ? '…' : ''}
+                        </p>
+                        {m.actionAngle && (
+                          <p style={{ margin: '8px 0 0', fontSize: 11, lineHeight: 1.4, padding: '6px 8px', background: '#FFE4E0', borderLeft: '3px solid #FF1300', color: '#000' }}>
+                            <strong style={{ fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#FF1300' }}>ANGLE: </strong>
+                            {m.actionAngle.slice(0, 200)}{m.actionAngle.length > 200 ? '…' : ''}
+                          </p>
+                        )}
+                        {m.productCategories.length > 0 && (
+                          <p style={{ margin: '6px 0 0', fontSize: 10, color: '#6b6b6b' }}>
+                            categories: {m.productCategories.slice(0, 4).join(' · ')}
+                          </p>
+                        )}
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              )}
+              {rdMatches.length === 0 && rdQuery && !rdLoading && (
+                <p style={{ color: '#6b6b6b', fontSize: 12 }}>No matches yet — try a different phrasing.</p>
+              )}
+            </Section>
+
+            {/* Cross-platform velocity */}
+            {crossPlatform && (
+              <Section title="Cross-platform velocity" subtitle="Trends that span multiple platform classes (TikTok / Reddit / newsletter / etc) are higher-confidence signals. Newsletter-only items are often the EARLIEST signals — culture writers spot before mainstream.">
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+                  {/* Platform distribution */}
+                  <div className="jai-card" style={{ padding: 14, background: '#FFFDF3', border: '1px solid #00000020' }}>
+                    <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#FF1300' }}>
+                      PLATFORM DISTRIBUTION
+                    </p>
+                    <ul style={{ margin: '8px 0 0 0', padding: 0, listStyle: 'none' }}>
+                      {Object.entries(crossPlatform.byPlatform).sort((a, b) => b[1] - a[1]).map(([p, n]) => (
+                        <li key={p} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 12 }}>
+                          <span style={{ fontFamily: 'var(--font-jai-display)', letterSpacing: '0.05em' }}>{p}</span>
+                          <strong>{n} trends</strong>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* Multi-platform trends */}
+                  <div className="jai-card" style={{ padding: 14, background: '#000', color: '#FFFDF3', border: '1px solid #FF1300' }}>
+                    <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#FF1300' }}>
+                      3+ PLATFORM TRENDS · CROSS-CONFIRMED
+                    </p>
+                    <ol style={{ margin: '8px 0 0 0', padding: '0 0 0 18px' }}>
+                      {crossPlatform.multiPlatformTrends.slice(0, 6).map((t) => (
+                        <li key={t.id} style={{ marginBottom: 6, fontSize: 12, lineHeight: 1.35 }}>
+                          <a href={`/culture-radar/trends/${t.slug}`} style={{ color: '#FFFDF3', textDecoration: 'none' }}>
+                            <strong>{t.name}</strong>
+                          </a>
+                          <span style={{ marginLeft: 6, fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#FF1300' }}>
+                            {t.platformCount}×
+                          </span>
+                          <div style={{ fontSize: 10, opacity: 0.5 }}>{t.platforms.join(' · ')}</div>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+
+                  {/* Newsletter-only (early signal) */}
+                  <div className="jai-card" style={{ padding: 14, background: '#FFE4E0', border: '1px solid #FF1300' }}>
+                    <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#FF1300' }}>
+                      EARLY SIGNAL · NEWSLETTER-ONLY
+                    </p>
+                    <p style={{ margin: '4px 0 8px', fontSize: 11, color: '#6b6b6b' }}>
+                      In a newsletter today, not yet on TikTok/Reddit. Culture writers ahead of the curve.
+                    </p>
+                    <ol style={{ margin: 0, padding: '0 0 0 18px' }}>
+                      {crossPlatform.newsletterOnly.slice(0, 8).map((t) => (
+                        <li key={t.id} style={{ marginBottom: 4, fontSize: 12, lineHeight: 1.3, color: '#1a1a1a' }}>
+                          <a href={`/culture-radar/trends/${t.slug}`} style={{ color: '#1a1a1a', textDecoration: 'none' }}>
+                            <strong>{t.name}</strong>
+                          </a>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+
+                  {/* Platform pairs */}
+                  <div className="jai-card" style={{ padding: 14, background: '#FAF6E6', border: '1px solid #00000020' }}>
+                    <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#000' }}>
+                      PLATFORM JUMP HEATMAP
+                    </p>
+                    <p style={{ margin: '4px 0 8px', fontSize: 11, color: '#6b6b6b' }}>
+                      Most common platform pairs (co-occurrence in source lists).
+                    </p>
+                    <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+                      {crossPlatform.platformPairs.slice(0, 8).map((p) => (
+                        <li key={p.pair} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 12 }}>
+                          <span style={{ fontFamily: 'var(--font-jai-display)', letterSpacing: '0.05em' }}>{p.pair}</span>
+                          <strong>{p.count}</strong>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </Section>
+            )}
 
             {/* Source health */}
             <Section title="Source health scorecard" subtitle="Per source: what % of trends from this source were verified as real vs fabricated. Helps demote noisy sources.">

@@ -314,6 +314,12 @@ export async function scrapeSource(source: SourceRow, lookbackDays: number): Pro
   if (source.source_type === 'tiktok_cc_hashtag') {
     return scrapeTikTokCC(source)
   }
+  // TikTok /discover/{slug} pages get a dedicated structured parser
+  // that extracts video + creator data directly from the rendered HTML.
+  // Bypasses Gemini hallucination for the video list.
+  if (source.url.includes('/discover/')) {
+    return scrapeTikTokDiscover(source)
+  }
 
   const scrapeUrl = widenUrlForLookback(source.url, source.source_type, lookbackDays)
   const fetchedAt = new Date().toISOString()
@@ -430,6 +436,66 @@ async function scrapeGoogleTrends(source: SourceRow): Promise<ScrapeResult> {
  * The source's `notes` field can contain a country code override
  * (e.g. "NL", "FR"). Defaults to the country implied by source name.
  */
+/**
+ * TikTok /discover/{slug} scraper. JS-render via Firecrawl, then
+ * structured-parse for video links + creators. Returns a high-signal
+ * markdown payload (no Gemini hallucination on the video list).
+ */
+async function scrapeTikTokDiscover(source: SourceRow): Promise<ScrapeResult> {
+  const fetchedAt = new Date().toISOString()
+  // Slug = last path segment of /discover/<slug>
+  const slugMatch = source.url.match(/\/discover\/([^/?#]+)/)
+  const slug = slugMatch ? slugMatch[1] : 'unknown'
+
+  try {
+    const { parseDiscoverHtml, discoverResultToMarkdown } = await import('@/lib/tiktok-discover')
+    const result = await firecrawl.scrape(source.url, {
+      formats: ['html'],
+      waitFor: 4000,
+      timeout: 45_000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9,nl;q=0.8',
+      },
+    })
+    const html = (result as { html?: string }).html ?? ''
+    if (!html) {
+      return {
+        sourceId: source.id, sourceName: source.name, sourceCategory: source.category,
+        url: source.url, ok: false, fetchedAt, textSnippet: '', topLinks: [],
+        error: 'empty_html_from_firecrawl',
+      }
+    }
+
+    const parsed = parseDiscoverHtml(html, slug)
+    if (parsed.videos.length === 0) {
+      return {
+        sourceId: source.id, sourceName: source.name, sourceCategory: source.category,
+        url: source.url, ok: false, fetchedAt, textSnippet: '', topLinks: [],
+        error: 'no_videos_parsed',
+      }
+    }
+
+    const markdown = discoverResultToMarkdown(parsed)
+    return {
+      sourceId: source.id,
+      sourceName: source.name,
+      sourceCategory: source.category,
+      url: source.url,
+      ok: true,
+      fetchedAt,
+      textSnippet: markdown,
+      topLinks: parsed.videos.slice(0, 20).map((v) => v.videoUrl),
+    }
+  } catch (err) {
+    return {
+      sourceId: source.id, sourceName: source.name, sourceCategory: source.category,
+      url: source.url, ok: false, fetchedAt, textSnippet: '', topLinks: [],
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
+
 async function scrapeTikTokCC(source: SourceRow): Promise<ScrapeResult> {
   const fetchedAt = new Date().toISOString()
   // Country code is in source.notes (e.g. "NL"), fall back to scanning the
