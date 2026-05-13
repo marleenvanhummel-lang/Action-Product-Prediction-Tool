@@ -47,7 +47,9 @@ function embedText(t: EmbedInput): string {
 
 export async function embedTrend(t: EmbedInput): Promise<number[] | null> {
   try {
-    const model = genAI.getGenerativeModel({ model: 'text-embedding-004' })
+    // gemini-embedding-001 (3072d). text-embedding-004 is no longer
+    // available on v1beta as of mid-2026.
+    const model = genAI.getGenerativeModel({ model: 'gemini-embedding-001' })
     const result = await model.embedContent(embedText(t))
     return result.embedding.values
   } catch (err) {
