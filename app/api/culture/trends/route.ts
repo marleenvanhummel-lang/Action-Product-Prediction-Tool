@@ -24,6 +24,7 @@ export async function GET(req: Request) {
   const view = (searchParams.get('view') ?? 'all') as 'daily' | 'weekly' | 'all' | 'emerging' | 'inspiration'
   const category = searchParams.get('category')
   const country = searchParams.get('country')?.toUpperCase() || null
+  const vibe = searchParams.get('vibe')?.toLowerCase() || null
   const week = searchParams.get('week') ?? isoWeek()
   const limit = Math.min(Number(searchParams.get('limit') ?? '100'), 200)
   const includeArchived = searchParams.get('includeArchived') === '1'
@@ -34,6 +35,7 @@ export async function GET(req: Request) {
       view,
       category,
       country,
+      vibe,
       limit,
       includeArchived,
     })

@@ -108,6 +108,7 @@ export default function CultureRadarPage() {
   const [view, setView] = useState<View>('daily')
   const [category, setCategory] = useState<string>('')
   const [country, setCountry] = useState<string>('')
+  const [vibe, setVibe] = useState<string>('')
   const [search, setSearch] = useState<string>('')
   const [trends, setTrends] = useState<CultureTrend[]>([])
   const [sources, setSources] = useState<CultureSource[]>([])
@@ -133,6 +134,7 @@ export default function CultureRadarPage() {
       const params = new URLSearchParams({ view })
       if (category) params.set('category', category)
       if (country) params.set('country', country)
+      if (vibe) params.set('vibe', vibe)
       const res = await apiFetch(`/api/culture/trends?${params}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data: TrendsResponse = await res.json()
@@ -143,7 +145,7 @@ export default function CultureRadarPage() {
     } finally {
       setLoading(false)
     }
-  }, [view, category, country])
+  }, [view, category, country, vibe])
 
   const loadSources = useCallback(async () => {
     try {
@@ -520,6 +522,33 @@ export default function CultureRadarPage() {
               {CATEGORIES.map((c) => (
                 <option key={c.value} value={c.value}>{c.value === '' ? 'All categories' : c.label}</option>
               ))}
+            </select>
+
+            {/* Vibe select — unhinged / aesthetic / humor / etc */}
+            <select
+              value={vibe}
+              onChange={(e) => setVibe(e.target.value)}
+              title="Vibe filter — unhinged covers brainrot, italian brainrot, skibidi, gen alpha slop"
+              style={{
+                padding: '8px 10px',
+                fontFamily: 'var(--font-body)',
+                fontSize: 12,
+                border: vibe ? '1px solid #FF1300' : '1px solid #00000020',
+                background: vibe ? '#FFE4E0' : '#FFFDF3',
+                color: vibe ? '#FF1300' : '#1a1a1a',
+                cursor: 'pointer',
+                fontWeight: vibe ? 600 : 400,
+              }}
+            >
+              <option value="">All vibes</option>
+              <option value="unhinged">💀 Unhinged / brainrot</option>
+              <option value="aesthetic">✨ Aesthetic</option>
+              <option value="humor">😂 Humor</option>
+              <option value="wholesome">🌱 Wholesome</option>
+              <option value="emotional">💔 Emotional</option>
+              <option value="informational">📰 Informational</option>
+              <option value="product">🛒 Product</option>
+              <option value="sport">⚽ Sport</option>
             </select>
 
             <button

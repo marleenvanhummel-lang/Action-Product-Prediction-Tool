@@ -24,6 +24,7 @@ import { POST as scanCreatorsHandler } from '@/app/api/culture/scan-creators/rou
 import { POST as recomputeBundlesHandler } from '@/app/api/culture/recompute-bundles/route'
 import { POST as enrichMindmapsHandler } from '@/app/api/culture/enrich-mindmaps/route'
 import { POST as enrichCountriesHandler } from '@/app/api/culture/enrich-countries/route'
+import { POST as enrichVibesHandler } from '@/app/api/culture/enrich-vibes/route'
 import { POST as momentsFetchHandler } from '@/app/api/moments/fetch/route'
 import { refreshMomentStatuses } from '@/lib/moments-db'
 import { POST as momentsBriefsHandler } from '@/app/api/moments/backfill-briefs/route'
@@ -229,6 +230,23 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Step 2c3: Vibe classification (unhinged / aesthetic / humor / etc) ──
+  let vibesTagged = 0
+  if (!fetchError) {
+    try {
+      const vibeReq = new NextRequest(new URL('http://internal/api/culture/enrich-vibes'), {
+        method: 'POST',
+        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
+        body: JSON.stringify({ limit: 60 }),
+      })
+      const r = await enrichVibesHandler(vibeReq)
+      const d = (await r.json()) as { tagged?: number }
+      vibesTagged = d.tagged ?? 0
+    } catch {
+      /* best-effort */
+    }
+  }
+
   // ── Step 2d: Mindmap enrichment (Context & connections per trend) ─────
   // One batch of 12 trends per cron run, ranked by daily_rank. The top
   // hero/featured trends get a mindmap within one day of going active.
@@ -290,6 +308,7 @@ export async function GET(req: NextRequest) {
     mindmapsEnriched,
     countriesTagged,
     countriesDropped,
+    vibesTagged,
     isMonthStart,
     momentsError,
     momentsSummary,

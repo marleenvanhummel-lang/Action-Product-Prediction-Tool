@@ -90,6 +90,7 @@ export interface CultureTrend {
   feedbackGeneric: number
   thumbnailMeta: { authorName?: string; authorUrl?: string; title?: string; source?: string } | null
   bundleKey: string | null
+  vibe: 'unhinged' | 'aesthetic' | 'humor' | 'wholesome' | 'emotional' | 'informational' | 'product' | 'sport' | null
   mindmap: {
     origin: Array<{ label: string; detail?: string; url?: string }>
     spreading: Array<{ label: string; detail?: string; url?: string }>

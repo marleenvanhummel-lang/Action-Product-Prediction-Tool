@@ -9,6 +9,42 @@ import { computeMomentum } from '@/lib/trend-momentum'
 // Extended trend type with optional bundle variants
 type TrendWithVariants = CultureTrend & { bundleVariants?: CultureTrend[] }
 
+// ── Vibe chip (unhinged / aesthetic / humor / etc) ─────────────────────────
+
+const VIBE_STYLES: Record<string, { bg: string; fg: string; emoji: string; label: string }> = {
+  unhinged:      { bg: '#000',    fg: '#FF1300', emoji: '💀', label: 'UNHINGED' },
+  aesthetic:     { bg: '#FFE4E0', fg: '#FF1300', emoji: '✨', label: 'AESTHETIC' },
+  humor:         { bg: '#FFF7E0', fg: '#000',    emoji: '😂', label: 'HUMOR' },
+  wholesome:     { bg: '#E8F5E8', fg: '#065f46', emoji: '🌱', label: 'WHOLESOME' },
+  emotional:     { bg: '#FAF6E6', fg: '#7c3aed', emoji: '💔', label: 'EMOTIONAL' },
+  informational: { bg: '#F5F5F5', fg: '#1a1a1a', emoji: '📰', label: 'INFO' },
+  product:       { bg: '#FFE4E0', fg: '#000',    emoji: '🛒', label: 'PRODUCT' },
+  sport:         { bg: '#E0F0FF', fg: '#0c4a6e', emoji: '⚽', label: 'SPORT' },
+}
+
+function VibeChip({ vibe }: { vibe: CultureTrend['vibe'] }) {
+  if (!vibe) return null
+  const s = VIBE_STYLES[vibe]
+  if (!s) return null
+  return (
+    <span
+      title={`Vibe: ${s.label.toLowerCase()}`}
+      style={{
+        fontFamily: 'var(--font-jai-display)',
+        fontSize: 9,
+        letterSpacing: '0.1em',
+        padding: '2px 6px',
+        background: s.bg,
+        color: s.fg,
+        textTransform: 'uppercase',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {s.emoji} {s.label}
+    </span>
+  )
+}
+
 // ── Momentum pill ─────────────────────────────────────────────────────────
 
 function MomentumPill({ trend, size = 'sm' }: { trend: CultureTrend; size?: 'sm' | 'md' }) {
@@ -481,6 +517,7 @@ export function CompactTrend({ trend }: { trend: TrendWithVariants }) {
               </span>
             )}
             <p className="jai-mono-label" style={{ color: '#6b6b6b', margin: 0, fontSize: 9 }}>{trend.category}</p>
+            <VibeChip vibe={trend.vibe} />
             <MomentumPill trend={trend} />
             {trend.bundleVariants && trend.bundleVariants.length > 0 && (
               <span

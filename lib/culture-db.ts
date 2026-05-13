@@ -91,6 +91,7 @@ interface TrendRowDB {
   feedback_generic: number | null
   thumbnail_meta: { authorName?: string; authorUrl?: string; title?: string; source?: string } | null
   bundle_key: string | null
+  vibe: string | null
   mindmap: CultureTrend['mindmap']
 }
 
@@ -414,6 +415,7 @@ export interface ListTrendsArgs {
   view: 'daily' | 'weekly' | 'all' | 'emerging' | 'inspiration'
   category: string | null
   country?: string | null  // ActionCountry code; null = no filter
+  vibe?: string | null     // unhinged / aesthetic / humor / wholesome / emotional / informational / product / sport
   limit: number
   includeArchived: boolean
 }
@@ -434,6 +436,10 @@ export async function listTrends(args: ListTrendsArgs): Promise<TrendRowDB[]> {
     conditions.push(
       `(country_relevance IS NULL OR cardinality(country_relevance) = 0 OR $${params.length}::text = ANY(country_relevance))`,
     )
+  }
+  if (args.vibe) {
+    params.push(args.vibe)
+    conditions.push(`vibe = $${params.length}`)
   }
 
   let orderBy: string
@@ -467,7 +473,7 @@ export async function listTrends(args: ListTrendsArgs): Promise<TrendRowDB[]> {
             popularity_score, freshness_score, validation_score, reasoning,
             source_ids, source_names, daily_rank, weekly_rank, rank_date,
             rank_week, estimated_views, status, brand_brief, country_relevance,
-            feedback_useful, feedback_generic, thumbnail_meta, mindmap, bundle_key
+            feedback_useful, feedback_generic, thumbnail_meta, mindmap, bundle_key, vibe
        FROM culture_trends
       WHERE ${conditions.join(' AND ')}
       ORDER BY ${orderBy}
@@ -536,6 +542,7 @@ export function rowToTrend(row: TrendRowDB): CultureTrend {
     feedbackGeneric: row.feedback_generic ?? 0,
     thumbnailMeta: row.thumbnail_meta ?? null,
     bundleKey: row.bundle_key ?? null,
+    vibe: (row.vibe ?? null) as CultureTrend['vibe'],
     mindmap: row.mindmap ?? null,
   }
 }
