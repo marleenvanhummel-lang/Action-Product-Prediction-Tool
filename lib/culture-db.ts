@@ -308,15 +308,18 @@ export async function updateTrend(t: UpdateTrendArgs): Promise<boolean> {
 }
 
 export async function loadActiveTrendsForRanking(week: string): Promise<
-  Array<{ id: string; popularity_score: number; freshness_score: number; validation_score: number; first_seen_at: string | null }>
+  Array<{ id: string; popularity_score: number; freshness_score: number; validation_score: number; first_seen_at: string | null; verify_verdict: string | null }>
 > {
+  // verify_verdict column may not exist yet (added by /verify-trends).
+  // Defensive: create it if absent so this read never fails.
+  await sql().query(`ALTER TABLE culture_trends ADD COLUMN IF NOT EXISTS verify_verdict TEXT`)
   const rows = (await sql().query(
     `SELECT id, popularity_score, freshness_score, validation_score,
-            first_seen_at::TEXT AS first_seen_at
+            first_seen_at::TEXT AS first_seen_at, verify_verdict
        FROM culture_trends
       WHERE rank_week = $1 AND status = 'active'`,
     [week],
-  )) as Array<{ id: string; popularity_score: number; freshness_score: number; validation_score: number; first_seen_at: string | null }>
+  )) as Array<{ id: string; popularity_score: number; freshness_score: number; validation_score: number; first_seen_at: string | null; verify_verdict: string | null }>
   return rows
 }
 

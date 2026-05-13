@@ -712,6 +712,7 @@ export async function recomputeRanks(week: string, today: string): Promise<void>
         freshness: Number(t.freshness_score) || 0,
         validation: Number(t.validation_score) || 0,
         firstSeenAt: t.first_seen_at ?? null,
+        verifyVerdict: t.verify_verdict ?? null,
       }),
     }))
     .sort((a, b) => b.score - a.score)

@@ -30,6 +30,7 @@ import { POST as enrichSubculturesHandler } from '@/app/api/culture/enrich-subcu
 import { POST as computeGrowthHandler } from '@/app/api/culture/compute-growth/route'
 import { POST as snapshotHandler } from '@/app/api/culture/snapshot-trends/route'
 import { POST as snapshotGtHandler } from '@/app/api/culture/snapshot-gt/route'
+import { POST as verifyTrendsHandler } from '@/app/api/culture/verify-trends/route'
 import { POST as momentsFetchHandler } from '@/app/api/moments/fetch/route'
 import { refreshMomentStatuses } from '@/lib/moments-db'
 import { POST as momentsBriefsHandler } from '@/app/api/moments/backfill-briefs/route'
@@ -285,6 +286,21 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Step 2c3.5: Hallucination filter (fabricated trends → archived) ───
+  let trendsArchived = 0
+  if (!fetchError) {
+    try {
+      const vReq = new NextRequest(new URL('http://internal/api/culture/verify-trends'), {
+        method: 'POST',
+        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
+        body: JSON.stringify({ limit: 80 }),
+      })
+      const r = await verifyTrendsHandler(vReq)
+      const d = (await r.json()) as { archived?: number }
+      trendsArchived = d.archived ?? 0
+    } catch { /* best-effort */ }
+  }
+
   // ── Step 2c4: Subculture classification ──────────────────────────────
   let subculturesTagged = 0
   if (!fetchError) {
@@ -409,6 +425,7 @@ export async function GET(req: NextRequest) {
     vibesTagged,
     subculturesTagged,
     growthScored,
+    trendsArchived,
     snapshotsInserted,
     gtItemsSnapped,
     isMonthStart,

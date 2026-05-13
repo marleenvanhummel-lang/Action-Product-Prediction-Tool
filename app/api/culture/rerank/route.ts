@@ -27,6 +27,7 @@ export async function POST(_req: NextRequest) {
         freshness: Number(t.freshness_score) || 0,
         validation: Number(t.validation_score) || 0,
         firstSeenAt: t.first_seen_at ?? null,
+        verifyVerdict: t.verify_verdict ?? null,
       }),
     }))
     .sort((a, b) => b.score - a.score)

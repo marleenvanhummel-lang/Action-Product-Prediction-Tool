@@ -85,26 +85,37 @@ export function rankingScore(args: {
   freshness: number
   validation: number
   firstSeenAt?: string | null
+  verifyVerdict?: string | null   // real | generic | fabricated | uncertain | null
 }): number {
-  const { popularity, freshness, validation, firstSeenAt } = args
+  const { popularity, freshness, validation, firstSeenAt, verifyVerdict } = args
 
   // Recency boost: trends first seen in the last 24h get +2, last 3 days
-  // get +1. Forces the daily top to refresh as new signals come in
-  // rather than letting established hashtags (WK, big sport events)
-  // squat on positions for days.
+  // get +1. Forces the daily top to refresh as new signals come in.
   let recencyBoost = 0
   if (firstSeenAt) {
     const ageDays = (Date.now() - new Date(firstSeenAt).getTime()) / 86_400_000
     if (ageDays < 1) recencyBoost = 2
     else if (ageDays < 3) recencyBoost = 1
-    else if (ageDays > 10) recencyBoost = -1  // gentle decay for stale top
+    else if (ageDays > 10) recencyBoost = -1
   }
 
+  // Hallucination penalty: single-source unverified trends get a soft
+  // demotion. Cross-confirmed trends or AI-verified "real" trends rise.
+  // 'generic' (AI-summary fluff) and 'fabricated' (verifier didn't catch
+  // it but probably should have) are heavily demoted.
+  let trustBonus = 0
+  if (validation >= 2) trustBonus = 1                  // cross-source
+  else if (verifyVerdict === 'real') trustBonus = 0.5  // verifier passed it
+  else if (verifyVerdict === 'generic') trustBonus = -2
+  else if (verifyVerdict === 'fabricated') trustBonus = -5  // belt + suspenders
+  else if (verifyVerdict === null || verifyVerdict === undefined) trustBonus = -0.5 // unverified yet
+
   return (
-    0.35 * clamp(popularity, 0, 10) +    // was 0.5
-    0.40 * clamp(freshness, 0, 10) +     // was 0.3
+    0.35 * clamp(popularity, 0, 10) +
+    0.40 * clamp(freshness, 0, 10) +
     0.20 * clamp(validation * 2, 0, 10) +
-    recencyBoost
+    recencyBoost +
+    trustBonus
   )
 }
 
