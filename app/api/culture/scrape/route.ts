@@ -60,6 +60,17 @@ export async function POST(req: NextRequest) {
   // Load sources
   const rows = await listSources({ activeOnly: true, ids: body.sourceIds })
   let sources = rows as unknown as SourceRow[]
+  // Exclude sources that belong to other pipelines or have no real URL.
+  // perplexity_moment_query is for /api/moments/fetch (forward-looking
+  // calendar events), not culture trends. 'manual' is the placeholder
+  // for human-submitted entries. Scraping either with Firecrawl just
+  // produces a 'Bad Request' because the URL is a pseudo internal one.
+  // Skip these unless the caller explicitly requested them via sourceIds.
+  if (!body.sourceIds || body.sourceIds.length === 0) {
+    sources = sources.filter(
+      (s) => s.source_type !== 'perplexity_moment_query' && s.source_type !== 'manual',
+    )
+  }
   if (body.limit) sources = sources.slice(0, body.limit)
   if (sources.length === 0) {
     return NextResponse.json({ ok: true, message: 'No active sources matched filters', scraped: 0 })
