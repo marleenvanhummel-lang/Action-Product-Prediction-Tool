@@ -77,7 +77,7 @@ export async function fetchPulseVideos(maxVideos = 6): Promise<DiscoverVideoForR
   }>
 
   const videoLinkRe = /https?:\/\/(?:www\.)?tiktok\.com\/@([a-zA-Z0-9._-]+)\/video\/(\d+)/i
-  const collected: DiscoverVideoForReport[] = []
+  const candidates: DiscoverVideoForReport[] = []
   const seenVideoIds = new Set<string>()
   const seenCreators = new Set<string>()
   const seenTrendIds = new Set<string>()
@@ -91,21 +91,62 @@ export async function fetchPulseVideos(maxVideos = 6): Promise<DiscoverVideoForR
       const videoId = m[2]
       if (seenVideoIds.has(videoId) || seenCreators.has(creator)) continue
       const meta = CATEGORY_FLAGS[r.category] ?? { flag: '📱', label: r.category }
-      collected.push({
+      candidates.push({
         creator,
         videoId,
         videoUrl: `https://www.tiktok.com/@${creator}/video/${videoId}`,
         countryFlag: meta.flag,
-        countryLabel: r.name.slice(0, 40),  // trend name as label
+        countryLabel: r.name.slice(0, 40),
         sourceTopic: r.category,
       })
       seenVideoIds.add(videoId)
       seenCreators.add(creator)
       seenTrendIds.add(r.id)
-      if (collected.length >= maxVideos) return collected
+      // Collect 3x what we need so we have backups after oEmbed validation
+      if (candidates.length >= maxVideos * 3) break
       break  // one video per trend
     }
+    if (candidates.length >= maxVideos * 3) break
   }
 
-  return collected
+  // Validate each via TikTok oEmbed — drops videos that are deleted,
+  // private, or region-blocked (the most common reason the embed
+  // blockquote stays empty)
+  const validated: DiscoverVideoForReport[] = []
+  for (const c of candidates) {
+    if (validated.length >= maxVideos) break
+    const ok = await validateTikTokOembed(c.videoUrl)
+    if (ok) validated.push(c)
+  }
+
+  return validated
+}
+
+/**
+ * TikTok oEmbed endpoint returns 200 + JSON for a valid embeddable
+ * video, 404/410 otherwise. We cache this in memory per process to
+ * avoid re-validating the same URL.
+ */
+const oembedCache = new Map<string, boolean>()
+
+async function validateTikTokOembed(videoUrl: string): Promise<boolean> {
+  if (oembedCache.has(videoUrl)) return oembedCache.get(videoUrl)!
+  try {
+    const oembed = `https://www.tiktok.com/oembed?url=${encodeURIComponent(videoUrl)}`
+    const ctrl = new AbortController()
+    const tid = setTimeout(() => ctrl.abort(), 4000)
+    const res = await fetch(oembed, { signal: ctrl.signal })
+    clearTimeout(tid)
+    if (!res.ok) {
+      oembedCache.set(videoUrl, false)
+      return false
+    }
+    const data = await res.json().catch(() => null) as { html?: string } | null
+    const ok = !!data?.html
+    oembedCache.set(videoUrl, ok)
+    return ok
+  } catch {
+    oembedCache.set(videoUrl, false)
+    return false
+  }
 }
