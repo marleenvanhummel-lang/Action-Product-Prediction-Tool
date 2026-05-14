@@ -144,6 +144,20 @@ export interface ReportData {
 export async function fetchReportData(): Promise<ReportData> {
   const week = isoWeek()
 
+  // All report sections cap at 7 days old (first_seen_at). Trends older
+  // than that don't belong in a "daily" magazine — they belong in the
+  // archive.
+  //
+  // Additionally: defense-in-depth against trends whose SOURCE ARTICLES
+  // are old (first_seen_at is fresh because we re-detected them today,
+  // but the underlying article is from 2024). We detect old-year archive
+  // paths in example_urls. Gemini's RECENCY HARD CAP prompt should
+  // already skip these, but if it slips through we filter here. Matches
+  // /YYYY/ for 2020-2024, /2025/MM/ for all months, and /2026/0[1-3]/
+  // for Jan-Mar 2026 (all older than 14 days from current cap). Update
+  // the date threshold annually.
+  const FRESH_URL_FILTER = `AND COALESCE(array_to_string(example_urls, ' '), '') !~ '/(202[0-4]|2025/[0-1][0-9]|2026/0[1-3])/'`
+
   const dailyTop10 = (await sql().query(
     `SELECT id, name, description, category, popularity_score, daily_rank,
             weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
@@ -152,6 +166,7 @@ export async function fetchReportData(): Promise<ReportData> {
             subculture, vibe, growth_score
        FROM culture_trends
       WHERE rank_week = $1 AND status = 'active' AND daily_rank IS NOT NULL
+        ${FRESH_URL_FILTER}
       ORDER BY daily_rank ASC LIMIT 10`,
     [week],
   )) as TrendForReport[]
@@ -165,6 +180,7 @@ export async function fetchReportData(): Promise<ReportData> {
        FROM culture_trends
       WHERE rank_week = $1 AND status = 'active' AND weekly_rank IS NOT NULL
         AND (daily_rank IS NULL OR daily_rank > 10)
+        ${FRESH_URL_FILTER}
       ORDER BY weekly_rank ASC LIMIT 20`,
     [week],
   )) as TrendForReport[]
@@ -182,6 +198,7 @@ export async function fetchReportData(): Promise<ReportData> {
         AND content_type IN ('format','meme','aesthetic','behavior')
         AND freshness_score >= 5
         AND first_seen_at >= NOW() - INTERVAL '7 days'
+        ${FRESH_URL_FILTER}
       ORDER BY first_seen_at DESC, popularity_score DESC
       LIMIT 8`,
   )) as TrendForReport[]
@@ -195,6 +212,7 @@ export async function fetchReportData(): Promise<ReportData> {
        FROM culture_trends
       WHERE status = 'active' AND popularity_score < 7 AND freshness_score >= 7
         AND first_seen_at >= NOW() - INTERVAL '7 days'
+        ${FRESH_URL_FILTER}
       ORDER BY first_seen_at DESC LIMIT 6`,
   )) as TrendForReport[]
 
@@ -223,6 +241,7 @@ export async function fetchReportData(): Promise<ReportData> {
        FROM culture_trends
       WHERE status = 'active' AND growth_score >= 7
         AND first_seen_at >= NOW() - INTERVAL '7 days'
+        ${FRESH_URL_FILTER}
       ORDER BY growth_score DESC, popularity_score DESC
       LIMIT 8`,
   )) as TrendForReport[]
@@ -237,6 +256,7 @@ export async function fetchReportData(): Promise<ReportData> {
        FROM culture_trends
       WHERE status = 'active' AND subculture IS NOT NULL
         AND first_seen_at >= NOW() - INTERVAL '7 days'
+        ${FRESH_URL_FILTER}
       ORDER BY popularity_score DESC, growth_score DESC NULLS LAST
       LIMIT 80`,
   )) as TrendForReport[]
@@ -277,6 +297,7 @@ export async function fetchReportData(): Promise<ReportData> {
             AND cardinality(country_relevance) BETWEEN 1 AND 6
             AND $1::text = ANY(country_relevance)
             AND first_seen_at >= NOW() - INTERVAL '7 days'
+            ${FRESH_URL_FILTER}
           ORDER BY COALESCE(daily_rank, 999) ASC,
                    COALESCE(growth_score, 0) DESC,
                    popularity_score DESC
