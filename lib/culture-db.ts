@@ -428,11 +428,23 @@ export interface ListTrendsArgs {
   includeArchived: boolean
 }
 
+// Defense-in-depth: trends whose example_urls point at old archive paths
+// (e.g. /2024/05/, /2025/01/) shouldn't surface in the dashboard or
+// magazine even if Gemini's RECENCY HARD CAP let them through. Mirrors
+// the same regex used by the report renderer. Update the year/month
+// threshold annually.
+const FRESH_URL_FILTER = `COALESCE(array_to_string(example_urls, ' '), '') !~ '/(202[0-4]|2025/[0-1][0-9]|2026/0[1-3])/'`
+
 export async function listTrends(args: ListTrendsArgs): Promise<TrendRowDB[]> {
   const conditions: string[] = ['rank_week = $1']
   const params: unknown[] = [args.week]
 
-  if (!args.includeArchived) conditions.push(`status = 'active'`)
+  if (!args.includeArchived) {
+    conditions.push(`status = 'active'`)
+    // Only apply the URL freshness filter when we're hiding archived
+    // trends. Users who explicitly request archives should see them.
+    conditions.push(FRESH_URL_FILTER)
+  }
   if (args.category) {
     params.push(args.category)
     conditions.push(`category = $${params.length}`)
@@ -512,6 +524,7 @@ export async function getTrendingSounds(week: string, limit = 12): Promise<Array
       WHERE rank_week = $1
         AND status = 'active'
         AND (category = 'sound' OR content_type = 'sound')
+        AND ${FRESH_URL_FILTER}
       ORDER BY popularity_score DESC, freshness_score DESC
       LIMIT $2`,
     [week, limit],
