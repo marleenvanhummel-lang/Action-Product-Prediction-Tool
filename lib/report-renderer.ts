@@ -14,6 +14,7 @@
 import { sql } from '@/lib/culture-db'
 import { isoWeek } from '@/lib/culture-radar'
 import { getTodaysCohort } from '@/lib/creator-radar'
+import { generateHeroImagesForReport } from '@/lib/trend-image'
 import type { ActionBrief, CultureTrend, CultureMoment } from '@/types/culture'
 
 interface CreatorForReport {
@@ -285,6 +286,33 @@ export async function fetchReportData(): Promise<ReportData> {
   const pullQuote = derivePullQuote(dailyTop10, breakout)
   const editorPicks = deriveEditorPicks(dailyTop10, breakout, bySubculture)
   const snapshotsByTrendId = await fetchTopTrendSnapshots(dailyTop10.slice(0, 5).map((t) => t.id))
+
+  // AI-generated cinematic hero images for trends without a real thumbnail
+  // (top 3 only — cost-bounded). Cached per (trend_id, day).
+  const needsImage = dailyTop10.slice(0, 3).filter((t) => !t.thumbnail_url)
+  let heroImages = new Map<string, string>()
+  if (needsImage.length > 0 && process.env.GOOGLE_API_KEY) {
+    try {
+      heroImages = await generateHeroImagesForReport(
+        needsImage.map((t) => ({
+          trendId: t.id,
+          name: t.name,
+          description: t.description,
+          category: t.category,
+          vibe: t.vibe,
+          subculture: t.subculture,
+        })),
+      )
+      // Inject the generated data URL into thumbnail_url so render
+      // helpers treat it like a real image.
+      for (const t of needsImage) {
+        const url = heroImages.get(t.id)
+        if (url) t.thumbnail_url = url
+      }
+    } catch (err) {
+      console.error('[report-renderer] hero image generation failed', err)
+    }
+  }
 
   // Issue number: epoch-day / 7 since 2026-01-01 → weekly increment
   const epoch = new Date('2026-01-01').getTime()
