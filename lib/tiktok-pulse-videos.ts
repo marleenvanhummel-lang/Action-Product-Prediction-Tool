@@ -66,7 +66,7 @@ export async function fetchPulseVideos(maxVideos = 6): Promise<DiscoverVideoForR
         AND (verify_verdict IS NULL OR verify_verdict != 'fabricated')
         AND example_urls IS NOT NULL
         AND array_length(example_urls, 1) > 0
-        AND first_seen_at >= NOW() - INTERVAL '14 days'
+        AND first_seen_at >= NOW() - INTERVAL '7 days'
       ORDER BY popularity_score DESC, first_seen_at DESC
       LIMIT 200`,
   )) as Array<{

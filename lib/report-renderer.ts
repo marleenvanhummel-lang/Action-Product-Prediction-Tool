@@ -169,6 +169,8 @@ export async function fetchReportData(): Promise<ReportData> {
     [week],
   )) as TrendForReport[]
 
+  // All report sections cap at 7 days old. Trends older than that
+  // don't belong in a "daily" magazine — they belong in the archive.
   const inspiration = (await sql().query(
     `SELECT id, name, description, category, popularity_score, daily_rank,
             weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
@@ -179,6 +181,7 @@ export async function fetchReportData(): Promise<ReportData> {
       WHERE status = 'active'
         AND content_type IN ('format','meme','aesthetic','behavior')
         AND freshness_score >= 5
+        AND first_seen_at >= NOW() - INTERVAL '7 days'
       ORDER BY first_seen_at DESC, popularity_score DESC
       LIMIT 8`,
   )) as TrendForReport[]
@@ -191,6 +194,7 @@ export async function fetchReportData(): Promise<ReportData> {
             subculture, vibe, growth_score
        FROM culture_trends
       WHERE status = 'active' AND popularity_score < 7 AND freshness_score >= 7
+        AND first_seen_at >= NOW() - INTERVAL '7 days'
       ORDER BY first_seen_at DESC LIMIT 6`,
   )) as TrendForReport[]
 
@@ -209,7 +213,7 @@ export async function fetchReportData(): Promise<ReportData> {
 
   const creators = (await getTodaysCohort()) as CreatorForReport[]
 
-  // Breakout: highest growth_score, sorted desc
+  // Breakout: highest growth_score, max 7 days old
   const breakout = (await sql().query(
     `SELECT id, name, description, category, popularity_score, daily_rank,
             weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
@@ -218,11 +222,12 @@ export async function fetchReportData(): Promise<ReportData> {
             subculture, vibe, growth_score
        FROM culture_trends
       WHERE status = 'active' AND growth_score >= 7
+        AND first_seen_at >= NOW() - INTERVAL '7 days'
       ORDER BY growth_score DESC, popularity_score DESC
       LIMIT 8`,
   )) as TrendForReport[]
 
-  // By subculture: group trends with subculture tag
+  // By subculture: max 7 days old
   const subTrends = (await sql().query(
     `SELECT id, name, description, category, popularity_score, daily_rank,
             weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
@@ -231,6 +236,7 @@ export async function fetchReportData(): Promise<ReportData> {
             subculture, vibe, growth_score
        FROM culture_trends
       WHERE status = 'active' AND subculture IS NOT NULL
+        AND first_seen_at >= NOW() - INTERVAL '7 days'
       ORDER BY popularity_score DESC, growth_score DESC NULLS LAST
       LIMIT 80`,
   )) as TrendForReport[]
@@ -270,6 +276,7 @@ export async function fetchReportData(): Promise<ReportData> {
             AND country_relevance IS NOT NULL
             AND cardinality(country_relevance) BETWEEN 1 AND 6
             AND $1::text = ANY(country_relevance)
+            AND first_seen_at >= NOW() - INTERVAL '7 days'
           ORDER BY COALESCE(daily_rank, 999) ASC,
                    COALESCE(growth_score, 0) DESC,
                    popularity_score DESC
