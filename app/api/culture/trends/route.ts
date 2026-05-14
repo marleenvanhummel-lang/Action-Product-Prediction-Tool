@@ -29,7 +29,11 @@ export async function GET(req: Request) {
   const minGrowthRaw = searchParams.get('minGrowth')
   const minGrowth = minGrowthRaw ? Number(minGrowthRaw) : null
   const week = searchParams.get('week') ?? isoWeek()
-  const limit = Math.min(Number(searchParams.get('limit') ?? '100'), 200)
+  // Default high enough to cover the full week's active trends (~600).
+  // The dashboard's search is client-side, so we need to ship every
+  // trend up front otherwise low-popularity items (e.g. "Top 5 Horror
+  // Movies") never match a query. Hard cap at 1000 to keep payload sane.
+  const limit = Math.min(Number(searchParams.get('limit') ?? '1000'), 1000)
   const includeArchived = searchParams.get('includeArchived') === '1'
 
   try {
