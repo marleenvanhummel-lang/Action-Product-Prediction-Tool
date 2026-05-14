@@ -273,6 +273,37 @@ export async function GET(req: NextRequest) {
   const urlsKept = (urlVerifyRes.data?.videoUrlsKept as number) ?? 0
   const urlsDropped = (urlVerifyRes.data?.videoUrlsDropped as number) ?? 0
 
+  // ── Article date verification ───────────────────────────────────────
+  // Fetches each trend's example_urls, parses the real publication date
+  // (Open Graph, JSON-LD, HTML5 <time>, URL-path fallback), archives
+  // trends whose ALL datable source articles are older than 14 days.
+  // Catches the case where Gemini re-detected an old trend today
+  // (fresh first_seen_at) but the underlying article is from 2024.
+  // Cached in culture_article_dates with 7d TTL so daily reruns are
+  // fast. GET via /api/culture/verify-article-dates because the route
+  // already uses query params; pass via URL.
+  let articleDatesScanned = 0
+  let articleDatesArchived = 0
+  try {
+    const res = await fetch(
+      `${origin}/api/culture/verify-article-dates?dryRun=0&limit=200&maxAgeDays=14&concurrency=8`,
+      {
+        method: 'GET',
+        headers: { authorization: expectedBearer },
+        signal: AbortSignal.timeout(270_000),
+      },
+    )
+    const d = (await res.json().catch(() => null)) as {
+      scanned?: number; archived?: number
+    } | null
+    if (res.ok && d) {
+      articleDatesScanned = d.scanned ?? 0
+      articleDatesArchived = d.archived ?? 0
+    }
+  } catch {
+    /* best-effort — defense-in-depth, not critical for cron success */
+  }
+
   return NextResponse.json({
     ok: !fetchError,
     durationMs: Date.now() - started,
@@ -296,6 +327,8 @@ export async function GET(req: NextRequest) {
     gtItemsSnapped,
     embedsAdded,
     lifecyclesComputed,
+    articleDatesScanned,
+    articleDatesArchived,
     isMonthStart,
     momentsError,
     momentsSummary,
