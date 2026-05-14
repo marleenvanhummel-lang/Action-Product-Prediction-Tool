@@ -15,6 +15,7 @@ import { sql } from '@/lib/culture-db'
 import { isoWeek } from '@/lib/culture-radar'
 import { getTodaysCohort } from '@/lib/creator-radar'
 import { generateHeroImagesForReport } from '@/lib/trend-image'
+import { fetchPulseVideos, type DiscoverVideoForReport } from '@/lib/tiktok-pulse-videos'
 import type { ActionBrief, CultureTrend, CultureMoment } from '@/types/culture'
 
 interface CreatorForReport {
@@ -137,6 +138,7 @@ export interface ReportData {
   pullQuote: PullQuote | null
   editorPicks: EditorPick[]
   snapshotsByTrendId: Record<string, SnapshotForReport[]>
+  pulseVideos: DiscoverVideoForReport[]
 }
 
 export async function fetchReportData(): Promise<ReportData> {
@@ -286,6 +288,11 @@ export async function fetchReportData(): Promise<ReportData> {
   const pullQuote = derivePullQuote(dailyTop10, breakout)
   const editorPicks = deriveEditorPicks(dailyTop10, breakout, bySubculture)
   const snapshotsByTrendId = await fetchTopTrendSnapshots(dailyTop10.slice(0, 5).map((t) => t.id))
+  // Pulse videos: real TikToks from the /discover scrapes for the
+  // 'On TikTok right now' section
+  let pulseVideos: DiscoverVideoForReport[] = []
+  try { pulseVideos = await fetchPulseVideos(6) }
+  catch (err) { console.error('[report-renderer] pulse videos failed', err) }
 
   // AI-generated cinematic hero images for the top 10 daily trends +
   // the breakout section + editor picks that lack a real thumbnail.
@@ -346,6 +353,7 @@ export async function fetchReportData(): Promise<ReportData> {
     pullQuote,
     editorPicks,
     snapshotsByTrendId,
+    pulseVideos,
   }
 }
 
@@ -1176,6 +1184,47 @@ function renderTableOfContents(data: ReportData): string {
 </tr>`
 }
 
+function renderPulseVideosSection(videos: DiscoverVideoForReport[]): string {
+  if (videos.length === 0) return ''
+  return `
+<tr>
+  <td style="padding:32px 40px 32px;background:#FFFDF3;">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-top:2px solid #000;">
+      <tr>
+        <td style="padding:24px 0 14px;">
+          <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.25em;color:#FF1300;text-transform:uppercase;">▶ On TikTok right now</p>
+          <h2 style="margin:8px 0 0;font-family:'Archivo Black',sans-serif;font-size:36px;line-height:1.0;text-transform:uppercase;letter-spacing:-0.02em;color:#000;">Trending videos<span style="color:#FF1300;">.</span></h2>
+          <p style="margin:12px 0 22px;font-family:'Newsreader',Georgia,serif;font-size:17px;line-height:1.45;color:#000;font-style:italic;font-weight:300;">Een doorsnede van wat TikTok deze week zelf cureert per Action-markt. Echte videos, embedded live.</p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <table cellpadding="0" cellspacing="0" border="0" width="100%">
+            ${chunkArray(videos, 2).map((pair) => `
+            <tr>
+              ${pair.map((v) => `
+              <td valign="top" width="50%" style="padding:0 6px 14px;">
+                <div style="background:#FAF6E6;border:1px solid #000;padding:12px;">
+                  <p style="margin:0 0 8px;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.18em;color:#FF1300;text-transform:uppercase;">${v.countryFlag} ${escapeHtml(v.countryLabel)} · @${escapeHtml(v.creator)}</p>
+                  ${renderTikTokEmbed({ url: v.videoUrl, videoId: v.videoId, creator: v.creator })}
+                </div>
+              </td>`).join('')}
+              ${pair.length < 2 ? '<td width="50%"></td>' : ''}
+            </tr>`).join('')}
+          </table>
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>`
+}
+
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const result: T[][] = []
+  for (let i = 0; i < arr.length; i += size) result.push(arr.slice(i, i + size))
+  return result
+}
+
 function renderContentIdeasSection(daily: TrendForReport[]): string {
   // Surface the 6 most actionable content angles from top trends as
   // a "today's content ideas" sidebar
@@ -1545,6 +1594,8 @@ export function renderReportHtml(data: ReportData): string {
         ${renderPullQuote(data.pullQuote)}
 
         ${renderEditorPicksSection(data.editorPicks)}
+
+        ${renderPulseVideosSection(data.pulseVideos)}
 
         ${renderContentIdeasSection(data.dailyTop10)}
 
