@@ -90,20 +90,52 @@ export interface GtCountrySpikeForReport {
   topArticle: { title: string; url: string; source: string | null } | null
 }
 
+interface SnapshotForReport {
+  trend_id: string
+  snapshot_date: string
+  popularity_score: number
+}
+
+export interface MagazineNumbers {
+  trendsTrackedToday: number
+  trendsFreshLast24h: number
+  subculturesActive: number
+  subculturesRising: number
+  multiCountryTrends: number
+  predictedToBreak: number
+  creatorsInCohort: number
+  momentsNext3Weeks: number
+}
+
+export interface PullQuote {
+  text: string
+  attribution: string
+}
+
+export interface EditorPick {
+  trend: TrendForReport
+  reason: string
+}
+
 export interface ReportData {
   generatedAt: string
   week: string
+  issueNumber: number
   dailyTop10: TrendForReport[]
   weeklyTop20: TrendForReport[]
   inspiration: TrendForReport[]
   emerging: TrendForReport[]
   upcomingMoments: MomentForReport[]
   creators: CreatorForReport[]
-  breakout: TrendForReport[]                // growth_score 7+, predicted to grow
+  breakout: TrendForReport[]
   bySubculture: Array<{ subculture: string; trends: TrendForReport[] }>
   byCountry: Array<{ code: string; flag: string; label: string; trends: TrendForReport[] }>
   gtMultiCountry: GtMultiCountryForReport[]
   gtCountrySpikes: GtCountrySpikeForReport[]
+  numbers: MagazineNumbers
+  pullQuote: PullQuote | null
+  editorPicks: EditorPick[]
+  snapshotsByTrendId: Record<string, SnapshotForReport[]>
 }
 
 export async function fetchReportData(): Promise<ReportData> {
@@ -248,9 +280,20 @@ export async function fetchReportData(): Promise<ReportData> {
   // GT pulse: multi-country interpreted trends + per-country spikes
   const { gtMultiCountry, gtCountrySpikes } = await fetchGtForReport()
 
+  // Editorial extras
+  const numbers = await fetchMagazineNumbers(week, dailyTop10.length, breakout.length, bySubculture.length, gtMultiCountry.length, creators.length, upcomingMoments.length)
+  const pullQuote = derivePullQuote(dailyTop10, breakout)
+  const editorPicks = deriveEditorPicks(dailyTop10, breakout, bySubculture)
+  const snapshotsByTrendId = await fetchTopTrendSnapshots(dailyTop10.slice(0, 5).map((t) => t.id))
+
+  // Issue number: epoch-day / 7 since 2026-01-01 → weekly increment
+  const epoch = new Date('2026-01-01').getTime()
+  const issueNumber = Math.max(1, Math.floor((Date.now() - epoch) / (7 * 86_400_000)) + 1)
+
   return {
     generatedAt: new Date().toISOString(),
     week,
+    issueNumber,
     dailyTop10,
     weeklyTop20,
     inspiration,
@@ -262,7 +305,93 @@ export async function fetchReportData(): Promise<ReportData> {
     byCountry: byCountry.filter((c) => c.trends.length > 0),
     gtMultiCountry,
     gtCountrySpikes,
+    numbers,
+    pullQuote,
+    editorPicks,
+    snapshotsByTrendId,
   }
+}
+
+async function fetchMagazineNumbers(
+  week: string,
+  topCount: number,
+  breakoutCount: number,
+  subcultureCount: number,
+  multiCountryCount: number,
+  creatorsCount: number,
+  momentsCount: number,
+): Promise<MagazineNumbers> {
+  // Single-roundtrip aggregations for the cover sidebar
+  const rows = (await sql().query(
+    `WITH stats AS (
+       SELECT
+         (SELECT COUNT(*)::int FROM culture_trends WHERE status = 'active' AND rank_week = $1) AS trends_today,
+         (SELECT COUNT(*)::int FROM culture_trends WHERE status = 'active' AND first_seen_at >= NOW() - INTERVAL '24 hours') AS trends_fresh,
+         (SELECT COUNT(DISTINCT subculture)::int FROM culture_trends WHERE status = 'active' AND subculture IS NOT NULL) AS subs_active
+     ) SELECT * FROM stats`,
+    [week],
+  )) as Array<{ trends_today: number; trends_fresh: number; subs_active: number }>
+  const s = rows[0] ?? { trends_today: 0, trends_fresh: 0, subs_active: 0 }
+
+  return {
+    trendsTrackedToday: s.trends_today,
+    trendsFreshLast24h: s.trends_fresh,
+    subculturesActive: s.subs_active,
+    subculturesRising: subcultureCount,
+    multiCountryTrends: multiCountryCount,
+    predictedToBreak: breakoutCount,
+    creatorsInCohort: creatorsCount,
+    momentsNext3Weeks: momentsCount,
+  }
+}
+
+function derivePullQuote(daily: TrendForReport[], breakout: TrendForReport[]): PullQuote | null {
+  // Pull the most striking action_relevance sentence from the top trends
+  const pool = [...daily.slice(0, 5), ...breakout.slice(0, 3)]
+  for (const t of pool) {
+    const rel = t.brand_brief?.actionRelevance
+    if (rel && rel.length >= 60 && rel.length <= 220) {
+      return { text: rel.replace(/^["']|["']$/g, ''), attribution: `On "${t.name}"` }
+    }
+  }
+  return null
+}
+
+function deriveEditorPicks(
+  daily: TrendForReport[],
+  breakout: TrendForReport[],
+  bySubculture: Array<{ subculture: string; trends: TrendForReport[] }>,
+): EditorPick[] {
+  const picks: EditorPick[] = []
+  // 1. Best high-growth, fresh, with subculture
+  const fresh = breakout.find((t) => t.subculture && (t.growth_score ?? 0) >= 6)
+  if (fresh) picks.push({ trend: fresh, reason: `Hoogste growth-score (${Number(fresh.growth_score).toFixed(1)}) in een trackbare subcultuur. Pak nu.` })
+  // 2. Best multi-country daily trend
+  const multi = daily.find((t) => (t.country_relevance ?? []).length >= 5 && (t.country_relevance ?? []).length < 14)
+  if (multi && !picks.find((p) => p.trend.id === multi.id)) picks.push({ trend: multi, reason: `Trending in ${(multi.country_relevance ?? []).length} markten. Cross-border opportunity.` })
+  // 3. Best subculture with rising trajectory
+  const subTrend = bySubculture[0]?.trends?.[0]
+  if (subTrend && !picks.find((p) => p.trend.id === subTrend.id)) picks.push({ trend: subTrend, reason: `Anker-trend in een snelgroeiende subculture (${bySubculture[0]?.subculture}).` })
+
+  return picks.slice(0, 3)
+}
+
+async function fetchTopTrendSnapshots(trendIds: string[]): Promise<Record<string, SnapshotForReport[]>> {
+  if (trendIds.length === 0) return {}
+  const rows = (await sql().query(
+    `SELECT trend_id, snapshot_date::TEXT AS snapshot_date, popularity_score
+       FROM culture_trend_snapshots
+      WHERE trend_id = ANY($1::uuid[])
+      ORDER BY trend_id, snapshot_date ASC`,
+    [trendIds],
+  )) as SnapshotForReport[]
+  const out: Record<string, SnapshotForReport[]> = {}
+  for (const r of rows) {
+    const list = out[r.trend_id] ?? []
+    list.push(r)
+    out[r.trend_id] = list
+  }
+  return out
 }
 
 async function fetchGtForReport(): Promise<{
@@ -400,46 +529,67 @@ function formatDate(iso: string): string {
   })
 }
 
-// Cinematic full-bleed cover hero: tall image, gradient overlay, headline,
-// kicker, and dek floating bottom-left. Falls back to a category-themed
-// SVG poster when no thumbnail is available.
+// Cinematic full-bleed cover hero. Two layouts:
+// - With thumbnail: massive image, gradient overlay, headline floats bottom
+// - Without thumbnail: art-directed SVG poster with category palette,
+//   geometric composition, and big typography
 function renderCoverHero(t: TrendForReport): string {
-  const color = CATEGORY_COLOR[t.category] ?? '#FF1300'
-  const emoji = CATEGORY_EMOJI[t.category] ?? '🔥'
+  const palette = categoryArtPalette(t.category)
   const hasThumb = !!t.thumbnail_url
 
-  // SVG poster: bold typographic placeholder when no real image
+  // Art-directed SVG poster
+  const cleanName = t.name.replace(/^#/, '').slice(0, 18)
   const svgPoster = !hasThumb
-    ? `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 800 480" preserveAspectRatio="xMidYMid slice" style="display:block;">
+    ? `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 800 540" preserveAspectRatio="xMidYMid slice" style="display:block;">
          <defs>
-           <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-             <stop offset="0%" stop-color="${color}" stop-opacity="0.18"/>
-             <stop offset="100%" stop-color="${color}" stop-opacity="0.55"/>
+           <linearGradient id="bg-${t.id.slice(0, 8)}" x1="0" y1="0" x2="1" y2="1">
+             <stop offset="0%" stop-color="${palette.primary}" stop-opacity="0.95"/>
+             <stop offset="100%" stop-color="${palette.secondary}" stop-opacity="0.9"/>
            </linearGradient>
+           <radialGradient id="rg-${t.id.slice(0, 8)}" cx="80%" cy="20%" r="60%">
+             <stop offset="0%" stop-color="${palette.accent}" stop-opacity="0.45"/>
+             <stop offset="100%" stop-color="${palette.accent}" stop-opacity="0"/>
+           </radialGradient>
          </defs>
-         <rect width="800" height="480" fill="#000"/>
-         <rect width="800" height="480" fill="url(#bg)"/>
-         <g transform="rotate(-12 660 240)">
-           <text x="660" y="280" text-anchor="middle" font-family="Archivo Black,sans-serif" font-size="320" fill="${color}" opacity="0.35">${emoji}</text>
-         </g>
+         <rect width="800" height="540" fill="url(#bg-${t.id.slice(0, 8)})"/>
+         <rect width="800" height="540" fill="url(#rg-${t.id.slice(0, 8)})"/>
+         <!-- Geometric accent bars -->
+         <rect x="0" y="0" width="800" height="6" fill="${palette.accent}"/>
+         <rect x="0" y="528" width="800" height="12" fill="${palette.accent}" opacity="0.6"/>
+         <line x1="40" y1="60" x2="120" y2="60" stroke="${palette.foreground}" stroke-width="3"/>
+         <!-- Background mark -->
+         <text x="760" y="500" text-anchor="end" font-family="Archivo Black,sans-serif" font-size="380" fill="${palette.foreground}" opacity="0.08" letter-spacing="-15">${escapeHtml(cleanName.charAt(0).toUpperCase())}</text>
+         <!-- Issue tag -->
+         <text x="40" y="100" font-family="Archivo Black,sans-serif" font-size="14" fill="${palette.accent}" letter-spacing="3">★ TODAY'S №1 · ${escapeHtml(t.category).toUpperCase()}</text>
        </svg>`
     : ''
 
   return `
 <tr>
-  <td style="padding:28px 40px 40px;">
-    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#000;border:1px solid #FF1300;">
+  <td style="padding:8px 40px 36px;">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#000;border:2px solid #FF1300;">
       <tr>
-        <td style="position:relative;padding:0;${hasThumb ? `background-image:linear-gradient(180deg,rgba(0,0,0,0.15) 0%,rgba(0,0,0,0.75) 75%,rgba(0,0,0,0.95) 100%),url(${escapeHtml(t.thumbnail_url!)});background-size:cover;background-position:center;` : ''}">
-          <div style="${hasThumb ? 'min-height:420px;' : ''}">
-            ${!hasThumb ? `<div style="position:relative;width:100%;height:420px;overflow:hidden;">${svgPoster}<div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0.2) 0%,rgba(0,0,0,0.85) 100%);"></div></div>` : ''}
-            <table cellpadding="0" cellspacing="0" border="0" width="100%" style="${hasThumb ? 'position:absolute;bottom:0;left:0;right:0;' : 'margin-top:-280px;position:relative;'}">
+        <td style="position:relative;padding:0;${hasThumb ? `background-image:linear-gradient(180deg,rgba(0,0,0,0.1) 0%,rgba(0,0,0,0.6) 60%,rgba(0,0,0,0.96) 100%),url(${escapeHtml(t.thumbnail_url!)});background-size:cover;background-position:center;` : ''}">
+          <div style="${hasThumb ? 'min-height:520px;' : ''}">
+            ${!hasThumb ? `<div style="position:relative;width:100%;height:520px;overflow:hidden;">${svgPoster}<div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0.15) 0%,rgba(0,0,0,0.4) 50%,rgba(0,0,0,0.92) 100%);"></div></div>` : ''}
+            <table cellpadding="0" cellspacing="0" border="0" width="100%" style="${hasThumb ? 'position:absolute;bottom:0;left:0;right:0;' : 'margin-top:-360px;position:relative;'}">
               <tr>
-                <td style="padding:24px 32px 28px;">
-                  <p style="margin:0 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.25em;color:#FF1300;text-transform:uppercase;">★ TODAY'S #1 · ${escapeHtml(t.category).toUpperCase()}</p>
-                  <h2 style="margin:8px 0 0 0;font-family:'Archivo Black',sans-serif;font-size:54px;line-height:0.9;color:#FFFDF3;text-transform:uppercase;letter-spacing:-0.025em;max-width:90%;">${escapeHtml(t.name)}<span style="color:#FF1300;">.</span></h2>
-                  <p style="margin:14px 0 0 0;font-family:'Newsreader',Georgia,serif;font-size:18px;line-height:1.45;color:#FFFDF3;opacity:0.92;font-weight:300;max-width:80%;">${escapeHtml(t.description.slice(0, 260))}${t.description.length > 260 ? '…' : ''}</p>
-                  ${t.estimated_views ? `<p style="margin:14px 0 0 0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.12em;color:#FFFDF3;opacity:0.6;text-transform:uppercase;">📊 ${escapeHtml(t.estimated_views)}${t.hashtags && t.hashtags.length > 0 ? ` · ${escapeHtml(t.hashtags.slice(0, 3).join(' '))}` : ''}</p>` : ''}
+                <td style="padding:32px 40px 40px;">
+                  <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.3em;color:#FF1300;text-transform:uppercase;">★ TODAY'S №1 · ${escapeHtml(t.category).toUpperCase()}${t.subculture ? ` · ◇ ${escapeHtml(t.subculture)}` : ''}</p>
+                  <h2 style="margin:14px 0 0 0;font-family:'Archivo Black',sans-serif;font-size:68px;line-height:0.86;color:#FFFDF3;text-transform:uppercase;letter-spacing:-0.03em;max-width:92%;">${escapeHtml(t.name)}<span style="color:#FF1300;">.</span></h2>
+                  <p style="margin:22px 0 0 0;font-family:'Newsreader',Georgia,serif;font-size:21px;line-height:1.42;color:#FFFDF3;opacity:0.95;font-weight:300;max-width:78%;font-style:italic;">${escapeHtml(t.description.slice(0, 280))}${t.description.length > 280 ? '…' : ''}</p>
+                  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:24px;">
+                    <tr>
+                      <td valign="middle">
+                        ${t.estimated_views ? `<span style="font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.15em;color:#FFFDF3;opacity:0.6;text-transform:uppercase;">📊 ${escapeHtml(t.estimated_views)}</span>` : ''}
+                        ${t.estimated_views && t.hashtags && t.hashtags.length > 0 ? '<span style="color:#FFFDF3;opacity:0.3;margin:0 10px;">|</span>' : ''}
+                        ${t.hashtags && t.hashtags.length > 0 ? `<span style="font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.1em;color:#FF1300;">${escapeHtml(t.hashtags.slice(0, 3).join(' '))}</span>` : ''}
+                      </td>
+                      <td valign="middle" align="right">
+                        ${t.growth_score != null ? `<span style="display:inline-block;padding:5px 12px;background:#FF1300;color:#FFFDF3;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.12em;">↗ GROWTH ${Number(t.growth_score).toFixed(1)}/10</span>` : ''}
+                      </td>
+                    </tr>
+                  </table>
                 </td>
               </tr>
             </table>
@@ -449,6 +599,24 @@ function renderCoverHero(t: TrendForReport): string {
     </table>
   </td>
 </tr>`
+}
+
+// Category-driven art direction palette for SVG posters
+function categoryArtPalette(category: string): { primary: string; secondary: string; accent: string; foreground: string } {
+  const map: Record<string, { primary: string; secondary: string; accent: string; foreground: string }> = {
+    food:      { primary: '#7c2d12', secondary: '#ea580c', accent: '#fde68a', foreground: '#fffbea' },
+    beauty:    { primary: '#831843', secondary: '#db2777', accent: '#fce7f3', foreground: '#fffbf5' },
+    fashion:   { primary: '#3b0764', secondary: '#9333ea', accent: '#f3e8ff', foreground: '#fefcff' },
+    home:      { primary: '#164e63', secondary: '#0891b2', accent: '#cffafe', foreground: '#f0fdff' },
+    lifestyle: { primary: '#713f12', secondary: '#ca8a04', accent: '#fef3c7', foreground: '#fffbeb' },
+    tech:      { primary: '#1e3a8a', secondary: '#2563eb', accent: '#bfdbfe', foreground: '#eff6ff' },
+    meme:      { primary: '#7f1d1d', secondary: '#dc2626', accent: '#fecaca', foreground: '#fff5f5' },
+    culture:   { primary: '#4c1d95', secondary: '#7c3aed', accent: '#ede9fe', foreground: '#faf5ff' },
+    platform:  { primary: '#064e3b', secondary: '#16a34a', accent: '#bbf7d0', foreground: '#f0fdf4' },
+    sound:     { primary: '#0c4a6e', secondary: '#0284c7', accent: '#bae6fd', foreground: '#f0f9ff' },
+    sport:     { primary: '#14532d', secondary: '#22c55e', accent: '#dcfce7', foreground: '#f7fef0' },
+  }
+  return map[category] ?? { primary: '#1f2937', secondary: '#000000', accent: '#FF1300', foreground: '#FFFDF3' }
 }
 
 function renderTrendCard(t: TrendForReport, opts: { showRank?: boolean } = {}): string {
@@ -858,6 +1026,109 @@ function renderSubcultureSection(bySubculture: ReportData['bySubculture']): stri
 </td></tr>`
 }
 
+// ── Editorial features ────────────────────────────────────────────────
+
+function renderDropCapLetter(): string {
+  // Match the first letter of the body text. In Dutch "De brief..." → "D".
+  return 'D'
+}
+
+function renderByTheNumbers(n: MagazineNumbers): string {
+  const items: Array<{ value: number | string; label: string; emphasis?: boolean }> = [
+    { value: n.trendsTrackedToday,   label: 'Trends tracked', emphasis: true },
+    { value: n.trendsFreshLast24h,   label: 'New last 24h' },
+    { value: n.multiCountryTrends,   label: 'Multi-country' },
+    { value: n.predictedToBreak,     label: 'Predicted breakout' },
+    { value: n.subculturesActive,    label: 'Active subcultures' },
+    { value: n.creatorsInCohort,     label: "Today's creators" },
+    { value: n.momentsNext3Weeks,    label: 'Moments next 3w' },
+  ]
+  return `
+<tr>
+  <td style="padding:0 40px 36px;background:#000;color:#FFFDF3;">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-top:1px solid #FFFDF330;border-bottom:1px solid #FFFDF330;">
+      <tr>
+        <td style="padding:18px 0 8px;">
+          <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.25em;color:#FF1300;text-transform:uppercase;">By the numbers</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:0 0 18px;">
+          <table cellpadding="0" cellspacing="0" border="0" width="100%">
+            <tr>
+              ${items.map((it) => `
+              <td valign="top" align="center" style="padding:0 6px;">
+                <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:${it.emphasis ? 38 : 28}px;line-height:1;color:${it.emphasis ? '#FF1300' : '#FFFDF3'};letter-spacing:-0.02em;">${it.value}</p>
+                <p style="margin:6px 0 0;font-family:'Archivo Black',sans-serif;font-size:8px;letter-spacing:0.15em;text-transform:uppercase;color:#FFFDF3;opacity:0.6;">${it.label}</p>
+              </td>`).join('')}
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>`
+}
+
+function renderPullQuote(q: PullQuote | null): string {
+  if (!q) return ''
+  return `
+<tr>
+  <td style="padding:8px 40px 32px;background:#FFFDF3;">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr>
+        <td style="padding:32px 40px;background:#FFE4E0;border-left:8px solid #FF1300;">
+          <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.25em;color:#FF1300;text-transform:uppercase;">▼ Pull quote</p>
+          <p style="margin:16px 0 0;font-family:'Newsreader',Georgia,serif;font-size:30px;line-height:1.25;font-style:italic;font-weight:400;color:#000;">"${escapeHtml(q.text)}"</p>
+          <p style="margin:14px 0 0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.15em;color:#FF1300;text-transform:uppercase;">— ${escapeHtml(q.attribution)}</p>
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>`
+}
+
+function renderEditorPicksSection(picks: EditorPick[]): string {
+  if (picks.length === 0) return ''
+  return `
+<tr>
+  <td style="padding:8px 40px 32px;background:#FFFDF3;">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr>
+        <td style="padding:0 0 16px;border-bottom:2px solid #000;">
+          <table cellpadding="0" cellspacing="0" border="0">
+            <tr>
+              <td style="background:#FF1300;color:#FFFDF3;padding:4px 10px;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;">★</td>
+              <td width="12">&nbsp;</td>
+              <td><p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#000;">Editor's picks · ${picks.length}</p></td>
+            </tr>
+          </table>
+          <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:36px;line-height:1.0;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">Action vandaag<br/><span style="color:#FF1300;">drie keuzes.</span></h2>
+        </td>
+      </tr>
+      ${picks.map((p, i) => `
+      <tr>
+        <td style="padding:24px 0;border-bottom:1px solid #00000020;">
+          <table cellpadding="0" cellspacing="0" border="0" width="100%">
+            <tr>
+              <td width="80" valign="top">
+                <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:60px;line-height:0.9;color:#FF1300;letter-spacing:-0.04em;">${String(i + 1).padStart(2, '0')}</p>
+              </td>
+              <td valign="top" style="padding-left:20px;">
+                <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:9px;letter-spacing:0.2em;color:#FF1300;text-transform:uppercase;">${escapeHtml(p.trend.category).toUpperCase()}${p.trend.subculture ? ` · ◇ ${p.trend.subculture}` : ''}</p>
+                <h3 style="margin:6px 0 8px;font-family:'Archivo Black',sans-serif;font-size:26px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.015em;">${escapeHtml(p.trend.name)}</h3>
+                <p style="margin:0;font-family:'Newsreader',Georgia,serif;font-size:16px;line-height:1.5;color:#1a1a1a;font-weight:400;">${escapeHtml(p.reason)}</p>
+                ${p.trend.brand_brief?.contentAngle ? `<p style="margin:10px 0 0;font-family:'Inter',sans-serif;font-size:12px;color:#000;background:#FAF6E6;border-left:3px solid #000;padding:8px 12px;line-height:1.4;"><strong style="font-family:'Archivo Black',sans-serif;font-size:9px;letter-spacing:0.15em;color:#FF1300;text-transform:uppercase;">Angle · </strong>${escapeHtml(p.trend.brand_brief.contentAngle.slice(0, 220))}${p.trend.brand_brief.contentAngle.length > 220 ? '…' : ''}</p>` : ''}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>`).join('')}
+    </table>
+  </td>
+</tr>`
+}
+
 export function renderReportHtml(data: ReportData): string {
   const dateLabel = formatDate(data.generatedAt)
   const totalTrends = data.dailyTop10.length + data.weeklyTop20.length + data.inspiration.length + data.emerging.length
@@ -893,62 +1164,81 @@ export function renderReportHtml(data: ReportData): string {
   <tr>
     <td align="center" style="padding:24px 16px;">
       <table cellpadding="0" cellspacing="0" border="0" width="760" style="max-width:760px;background:#FFFDF3;">
-        <!-- Magazine cover: hero trend image + branded headline -->
+        <!-- Magazine cover: bold masthead with issue # + date + dek -->
         <tr>
           <td style="padding:0;background:#000000;">
             <table cellpadding="0" cellspacing="0" border="0" width="100%">
               <tr>
-                <td style="padding:32px 40px 16px;color:#FFFDF3;">
-                  <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#FF1300;">JACK&amp;A!  ×  ACTION  ·  ISSUE ${data.week}</p>
-                </td>
-              </tr>
-              <tr>
-                <td style="padding:0 40px 8px;color:#FFFDF3;">
-                  <h1 style="margin:0;font-family:'Archivo Black',sans-serif;font-size:88px;line-height:0.88;font-weight:900;text-transform:uppercase;letter-spacing:-0.035em;color:#FFFDF3;">Culture<br/>Radar<span style="color:#FF1300;">.</span></h1>
-                </td>
-              </tr>
-              <tr>
-                <td style="padding:16px 40px 0;">
+                <td style="padding:24px 40px 12px;color:#FFFDF3;border-bottom:1px solid #FFFDF330;">
                   <table cellpadding="0" cellspacing="0" border="0" width="100%">
                     <tr>
-                      <td valign="middle" style="border-top:1px solid #FFFDF3;padding-top:14px;">
-                        <p style="margin:0;font-family:'Newsreader',Georgia,serif;font-size:18px;color:#FFFDF3;font-style:italic;font-weight:300;">${dateLabel}</p>
+                      <td valign="middle">
+                        <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;color:#FF1300;">JACK&amp;A! × ACTION</p>
                       </td>
-                      <td valign="middle" align="right" style="border-top:1px solid #FFFDF3;padding-top:14px;">
-                        <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.18em;color:#FF1300;text-transform:uppercase;">${totalTrends} trends · ${data.upcomingMoments.length} moments · ${data.creators.length} creators</p>
+                      <td valign="middle" align="right">
+                        <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.25em;color:#FFFDF3;opacity:0.6;text-transform:uppercase;">ISSUE №${String(data.issueNumber).padStart(3, '0')} · ${data.week}</p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:36px 40px 8px;color:#FFFDF3;">
+                  <h1 style="margin:0;font-family:'Archivo Black',sans-serif;font-size:110px;line-height:0.82;font-weight:900;text-transform:uppercase;letter-spacing:-0.04em;color:#FFFDF3;">Culture<br/>Radar<span style="color:#FF1300;">.</span></h1>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:18px 40px 28px;">
+                  <table cellpadding="0" cellspacing="0" border="0" width="100%">
+                    <tr>
+                      <td valign="middle" style="border-top:2px solid #FF1300;padding-top:14px;">
+                        <p style="margin:0;font-family:'Newsreader',Georgia,serif;font-size:20px;color:#FFFDF3;font-style:italic;font-weight:300;">${dateLabel}</p>
+                      </td>
+                      <td valign="middle" align="right" style="border-top:2px solid #FF1300;padding-top:14px;">
+                        <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.18em;color:#FF1300;text-transform:uppercase;">Daily intelligence · ${totalTrends}+ signals</p>
                       </td>
                     </tr>
                   </table>
                 </td>
               </tr>
               ${data.dailyTop10[0] ? renderCoverHero(data.dailyTop10[0]) : ''}
+              ${renderByTheNumbers(data.numbers)}
             </table>
           </td>
         </tr>
         <!-- Red accent strip -->
-        <tr><td style="background:#FF1300;height:6px;line-height:0;font-size:0;">&nbsp;</td></tr>
+        <tr><td style="background:#FF1300;height:8px;line-height:0;font-size:0;">&nbsp;</td></tr>
 
-        <!-- Editor's note — magazine-style intro -->
+        <!-- Editor's letter — drop cap + signature -->
         <tr>
-          <td style="padding:40px 40px 16px;background:#FFFDF3;">
+          <td style="padding:48px 40px 24px;background:#FFFDF3;">
             <table cellpadding="0" cellspacing="0" border="0" width="100%">
               <tr>
-                <td width="180" valign="top">
-                  <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.2em;color:#FF1300;text-transform:uppercase;">FROM THE EDITOR</p>
-                  <p style="margin:8px 0 0 0;font-family:'Newsreader',Georgia,serif;font-size:14px;color:#000;font-style:italic;font-weight:300;">${new Date(data.generatedAt).toLocaleDateString('nl-NL', { weekday: 'long' })}<br/>${data.week}</p>
-                </td>
-                <td valign="top" style="padding-left:24px;border-left:2px solid #000;">
-                  <p style="margin:0;font-family:'Newsreader',Georgia,serif;font-size:18px;line-height:1.55;color:#000;font-weight:400;">
-                    Vandaag: <strong>${data.dailyTop10.length} top trends</strong>, <strong>${data.gtMultiCountry.length} Google-search trends in 3+ landen</strong>, <strong>${data.gtCountrySpikes.length} country spikes</strong> met interpretatie, <strong>${data.breakout.length} signalen</strong> die volgens onze predictor binnen 14 dagen doorbreken, <strong>${data.bySubculture.length} actieve subcultures</strong>, <strong>${data.inspiration.length} formats</strong> om over te nemen, <strong>${data.creators.length} creators</strong>, en <strong>${data.upcomingMoments.length} moments</strong> in de komende drie weken.
+                <td valign="top">
+                  <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.25em;color:#FF1300;text-transform:uppercase;">From the editor · Brief №${String(data.issueNumber).padStart(3, '0')}</p>
+                  <h2 style="margin:14px 0 24px;font-family:'Archivo Black',sans-serif;font-size:42px;line-height:0.95;text-transform:uppercase;letter-spacing:-0.025em;color:#000;">
+                    What's hot today<span style="color:#FF1300;">.</span>
+                  </h2>
+                  <p style="margin:0;font-family:'Newsreader',Georgia,serif;font-size:20px;line-height:1.5;color:#000;font-weight:400;">
+                    <span style="float:left;font-family:'Archivo Black',sans-serif;font-size:78px;line-height:0.78;color:#FF1300;padding:6px 12px 0 0;margin-top:6px;">${renderDropCapLetter()}</span>
+                    e brief van vandaag staat in het teken van ${data.numbers.trendsFreshLast24h} nieuwe signalen die we de afgelopen 24 uur uit het culturele veld haalden. <strong>${data.dailyTop10.length} trends</strong> bovenaan, <strong>${data.numbers.multiCountryTrends} verhalen</strong> die in 3+ Action markten tegelijk popten, <strong>${data.numbers.predictedToBreak} signalen</strong> die onze predictor verwacht binnen 14 dagen door te breken, en <strong>${data.numbers.subculturesActive} actieve subcultures</strong> waarvan ${data.numbers.subculturesRising} in stijgende lijn.
                   </p>
-                  <p style="margin:12px 0 0 0;font-family:'Inter',sans-serif;font-size:12px;color:#6b6b6b;">
-                    Klik op een trend om de bron te openen. Sounds met <strong style="color:#FF1300;">✓ SAFE</strong> zijn rechtenvrij te gebruiken op Action's TikTok Business Account.
+                  <p style="margin:18px 0 0;font-family:'Newsreader',Georgia,serif;font-size:18px;line-height:1.55;color:#000;font-weight:400;">
+                    Plus <strong>${data.inspiration.length} formats</strong> om direct over te nemen, <strong>${data.creators.length} creators</strong> die het waard zijn om vandaag te volgen, en <strong>${data.upcomingMoments.length} kalendermomenten</strong> die in de komende drie weken vallen.
                   </p>
+                  <p style="margin:24px 0 0;font-family:'Inter',sans-serif;font-size:13px;color:#6b6b6b;letter-spacing:0.02em;">
+                    Een trend met <strong style="color:#FF1300;">✓ SAFE</strong> sound is rechtenvrij voor Action's TikTok Business Account. Een <strong style="color:#FF1300;">↗ BREAKOUT</strong> badge betekent dat onze predictor groei verwacht. Klik op een trend voor de bron.
+                  </p>
+                  <p style="margin:24px 0 0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;color:#000;text-transform:uppercase;">— De redactie</p>
                 </td>
               </tr>
             </table>
           </td>
         </tr>
+
+        ${renderPullQuote(data.pullQuote)}
+
+        ${renderEditorPicksSection(data.editorPicks)}
 
         <!-- DAILY TOP 10 -->
         <tr>

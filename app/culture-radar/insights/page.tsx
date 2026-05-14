@@ -81,26 +81,20 @@ export default function InsightsPage() {
   const [rdLoading, setRdLoading] = useState(false)
 
   useEffect(() => {
-    Promise.all([
-      apiFetch('/api/culture/clusters?k=12&freshOnly=1').then((r) => r.json()),
-      apiFetch('/api/culture/subculture-trajectory').then((r) => r.json()),
-      apiFetch('/api/culture/source-health').then((r) => r.json()),
-      apiFetch('/api/culture/cross-platform-velocity').then((r) => r.json()),
-      apiFetch('/api/culture/anomalies').then((r) => r.json()),
-      apiFetch('/api/culture/recommend').then((r) => r.json()),
-    ]).then(([c, s, src, cp, an, rec]) => {
-      setClusters(c)
-      setSubcultures(s.subcultures ?? [])
-      setSources(src.sources ?? [])
-      setCrossPlatform(cp)
-      setAnomalies(an.spikes ?? [])
-      setRecommendations(rec.recommendations ?? [])
-      setRecoSeeds(rec.seedExamples ?? [])
-      setRecoLikedCount(rec.likedCount ?? 0)
-      setLoading(false)
-    }).catch((e) => {
-      console.error(e); setLoading(false)
-    })
+    // Each panel loads independently so a slow Gemini call (clusters,
+    // 10-15s) doesn't block the fast panels.
+    setLoading(false)
+    apiFetch('/api/culture/anomalies').then((r) => r.json()).then((d) => setAnomalies(d.spikes ?? [])).catch(() => {})
+    apiFetch('/api/culture/recommend').then((r) => r.json()).then((d) => {
+      setRecommendations(d.recommendations ?? [])
+      setRecoSeeds(d.seedExamples ?? [])
+      setRecoLikedCount(d.likedCount ?? 0)
+    }).catch(() => {})
+    apiFetch('/api/culture/cross-platform-velocity').then((r) => r.json()).then(setCrossPlatform).catch(() => {})
+    apiFetch('/api/culture/subculture-trajectory').then((r) => r.json()).then((d) => setSubcultures(d.subcultures ?? [])).catch(() => {})
+    apiFetch('/api/culture/source-health').then((r) => r.json()).then((d) => setSources(d.sources ?? [])).catch(() => {})
+    // Clusters last because it's slowest (Gemini labeling)
+    apiFetch('/api/culture/clusters?k=12&freshOnly=1').then((r) => r.json()).then(setClusters).catch(() => {})
   }, [])
 
   async function runReverseDiscover() {
@@ -216,7 +210,9 @@ export default function InsightsPage() {
 
             {/* Clusters */}
             <Section title="Emerging clusters" subtitle="K-means on Gemini embeddings of fresh trends (last 14 days). Each cluster groups trends by semantic similarity — may surface unnamed meta-patterns.">
-              {!clusters || clusters.clusters.length === 0 ? (
+              {!clusters ? (
+                <p style={{ color: '#6b6b6b', fontSize: 12 }}>Loading clusters (Gemini labeling, ~10-15s)…</p>
+              ) : clusters.clusters.length === 0 ? (
                 <p style={{ color: '#6b6b6b' }}>Not enough embedded trends yet. Embed runs daily via cron.</p>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
