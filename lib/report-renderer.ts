@@ -1184,8 +1184,59 @@ function renderTableOfContents(data: ReportData): string {
 </tr>`
 }
 
-function renderPulseVideosSection(videos: DiscoverVideoForReport[]): string {
-  if (videos.length === 0) return ''
+function renderPulseVideosSection(videos: DiscoverVideoForReport[], topTrends: TrendForReport[] = []): string {
+  // If no validated embeds, render a "Search on TikTok" fallback grid
+  // using deep links to the top trends' hashtag searches. Better than
+  // hiding the section entirely.
+  if (videos.length === 0) {
+    const candidates = topTrends
+      .filter((t) => t.name.length > 1)
+      .slice(0, 6)
+      .map((t) => {
+        const cleaned = t.name.replace(/^#/, '').replace(/\s+/g, '').slice(0, 40)
+        return {
+          name: t.name,
+          searchUrl: `https://www.tiktok.com/search?q=${encodeURIComponent(t.name)}`,
+          tagUrl: t.name.startsWith('#') ? `https://www.tiktok.com/tag/${encodeURIComponent(cleaned)}` : null,
+          category: t.category,
+        }
+      })
+    if (candidates.length === 0) return ''
+    return `
+<tr>
+  <td style="padding:32px 40px 32px;background:#FFFDF3;">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-top:2px solid #000;">
+      <tr>
+        <td style="padding:24px 0 14px;">
+          <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.25em;color:#FF1300;text-transform:uppercase;">▶ Open on TikTok</p>
+          <h2 style="margin:8px 0 0;font-family:'Archivo Black',sans-serif;font-size:36px;line-height:1.0;text-transform:uppercase;letter-spacing:-0.02em;color:#000;">Watch live<span style="color:#FF1300;">.</span></h2>
+          <p style="margin:12px 0 22px;font-family:'Newsreader',Georgia,serif;font-size:17px;line-height:1.45;color:#000;font-style:italic;font-weight:300;">Geen embeddable videos vandaag in onze pipeline. Doorklik op TikTok voor de hashtag-pagina's van de top trends.</p>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <table cellpadding="0" cellspacing="0" border="0" width="100%">
+            ${chunkArray(candidates, 2).map((pair) => `
+            <tr>
+              ${pair.map((c) => `
+              <td valign="top" width="50%" style="padding:0 6px 10px;">
+                <a href="${escapeHtml(c.tagUrl ?? c.searchUrl)}" target="_blank" rel="noreferrer" style="display:block;text-decoration:none;color:inherit;">
+                  <div style="background:#000;color:#FFFDF3;border:1px solid #FF1300;padding:18px 20px;">
+                    <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:9px;letter-spacing:0.2em;color:#FF1300;text-transform:uppercase;">▶ ${escapeHtml(c.category).toUpperCase()}</p>
+                    <p style="margin:6px 0 0;font-family:'Archivo Black',sans-serif;font-size:20px;color:#FFFDF3;text-transform:uppercase;letter-spacing:-0.015em;line-height:1.05;">${escapeHtml(c.name)}</p>
+                    <p style="margin:10px 0 0;font-family:'Archivo Black',sans-serif;font-size:9px;letter-spacing:0.15em;color:#FFFDF3;opacity:0.6;text-transform:uppercase;">→ Open on TikTok</p>
+                  </div>
+                </a>
+              </td>`).join('')}
+              ${pair.length < 2 ? '<td width="50%"></td>' : ''}
+            </tr>`).join('')}
+          </table>
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>`
+  }
   return `
 <tr>
   <td style="padding:32px 40px 32px;background:#FFFDF3;">
@@ -1595,7 +1646,7 @@ export function renderReportHtml(data: ReportData): string {
 
         ${renderEditorPicksSection(data.editorPicks)}
 
-        ${renderPulseVideosSection(data.pulseVideos)}
+        ${renderPulseVideosSection(data.pulseVideos, data.dailyTop10)}
 
         ${renderContentIdeasSection(data.dailyTop10)}
 
