@@ -5,6 +5,7 @@ import { apiFetch } from '@/lib/api-client'
 import type { CultureSource, CultureTrend } from '@/types/culture'
 import { styleFor, LIFECYCLE_VISUAL } from './category-style'
 import { CompactTrend } from './trend-cards'
+import { ScrapeProgressPanel } from '@/components/culture/ScrapeProgressPanel'
 
 type View = 'daily' | 'weekly' | 'all' | 'emerging' | 'inspiration' | 'gtrends'
 
@@ -179,15 +180,52 @@ export default function CultureRadarPage() {
     setRefreshing(true)
     setRefreshResult(null)
     setError(null)
-    setRefreshStage('Scraping sources + extracting trends…')
+    setRefreshStage('Scraping sources… (watch the progress panel bottom-right)')
     try {
-      const res = await apiFetch('/api/culture/fetch', {
+      // Step 1: scrape with progress tracking. The /scrape endpoint
+      // writes per-source progress to culture_scrape_jobs so the
+      // ScrapeProgressPanel auto-shows. Survives page refresh.
+      const scrapeRes = await apiFetch('/api/culture/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ triggeredBy: label, lookbackDays }),
       })
-      const data: FetchResponse = await res.json()
-      if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`)
+      const scrapeData = (await scrapeRes.json()) as {
+        ok?: boolean; runId?: string; jobId?: string; okCount?: number;
+        failedCount?: number; error?: string
+      }
+      if (!scrapeRes.ok) throw new Error(scrapeData.error ?? `Scrape HTTP ${scrapeRes.status}`)
+
+      // Step 2: drain the extract queue (Gemini analysis + merge + rank)
+      setRefreshStage(`Scraped ${scrapeData.okCount} sources. Extracting trends with Gemini…`)
+      const extractRes = await apiFetch('/api/culture/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 200, rerank: true }),
+      })
+      const extractData = (await extractRes.json()) as {
+        inserted?: number; updated?: number; queueRemaining?: number; error?: string
+      }
+      if (!extractRes.ok) throw new Error(extractData.error ?? `Extract HTTP ${extractRes.status}`)
+
+      // Synthesise the FetchResponse shape so downstream UI keeps working
+      const data: FetchResponse = {
+        runId: scrapeData.runId ?? '',
+        status: scrapeData.failedCount === 0 ? 'ok' : (scrapeData.okCount ? 'partial' : 'failed'),
+        summary: {
+          sourcesAttempted: (scrapeData.okCount ?? 0) + (scrapeData.failedCount ?? 0),
+          sourcesOk: scrapeData.okCount ?? 0,
+          sourcesFailed: scrapeData.failedCount ?? 0,
+          identifiedRaw: 0,
+          mergedTrends: 0,
+          inserted: extractData.inserted ?? 0,
+          updated: extractData.updated ?? 0,
+          week: '',
+          tokensIn: 0,
+          tokensOut: 0,
+        },
+        failures: [],
+      }
       setRefreshResult(data)
       await loadTrends()
       await loadSources()
@@ -721,6 +759,9 @@ export default function CultureRadarPage() {
           onClose={closeModal}
         />
       )}
+
+      {/* ── Live scrape progress (auto-shows when a job is running) ── */}
+      <ScrapeProgressPanel />
     </div>
   )
 }
