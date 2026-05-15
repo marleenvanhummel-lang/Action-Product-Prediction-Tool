@@ -216,17 +216,38 @@ export async function fetchReportData(): Promise<ReportData> {
       ORDER BY first_seen_at DESC LIMIT 6`,
   )) as TrendForReport[]
 
+  // Moments query — has to use the "effective next date" pattern
+  // because the stored next_occurrence column is set to the EARLIEST
+  // country_dates entry, which may already be in the past while later
+  // countries still have it coming up. E.g. Father's Day fires in
+  // Germany on 14 May but in NL on 21 June — we want the moment to
+  // remain visible until the LAST country has passed it.
+  //
+  // Window is 45 days. Sort prioritises cultural_relevance over raw
+  // date so a high-relevance moment (Vaderdag, Moederdag, Kerst —
+  // anything ≥ 7) doesn't get pushed out by lower-relevance ones
+  // (TV finales, generic awareness days) that happen to fall sooner.
+  // Date is the tiebreaker within each relevance bucket.
   const upcomingMoments = (await sql().query(
-    `SELECT id, name, description, category, tier, cultural_relevance,
-            country_dates, next_occurrence::TEXT AS next_occurrence,
-            brand_brief, related_topics
-       FROM culture_moments
-      WHERE status <> 'archived'
-        AND next_occurrence IS NOT NULL
-        AND next_occurrence >= CURRENT_DATE
-        AND next_occurrence <= CURRENT_DATE + INTERVAL '21 days'
-      ORDER BY next_occurrence ASC, cultural_relevance DESC
-      LIMIT 8`,
+    `WITH next_dates AS (
+      SELECT m.*,
+             (SELECT MIN((cd->>'date')::date)
+                FROM jsonb_array_elements(m.country_dates) AS cd
+               WHERE (cd->>'date')::date >= CURRENT_DATE) AS effective_next
+        FROM culture_moments m
+       WHERE m.status <> 'archived'
+    )
+    SELECT id, name, description, category, tier, cultural_relevance,
+           country_dates,
+           COALESCE(effective_next, next_occurrence)::TEXT AS next_occurrence,
+           brand_brief, related_topics
+      FROM next_dates
+     WHERE COALESCE(effective_next, next_occurrence) IS NOT NULL
+       AND COALESCE(effective_next, next_occurrence) >= CURRENT_DATE
+       AND COALESCE(effective_next, next_occurrence) <= CURRENT_DATE + INTERVAL '45 days'
+     ORDER BY cultural_relevance DESC,
+              COALESCE(effective_next, next_occurrence) ASC
+     LIMIT 8`,
   )) as MomentForReport[]
 
   const creators = (await getTodaysCohort()) as CreatorForReport[]
