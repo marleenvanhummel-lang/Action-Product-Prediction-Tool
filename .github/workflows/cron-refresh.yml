@@ -1,0 +1,103 @@
+name: Culture Radar daily refresh
+
+# Independent fallback for the Vercel cron, which has stopped firing
+# (see docs/night-reports/2026-05-14.md Phase 4). Vercel only registers
+# crons on Git-integration deploys and our GitHub webhook is broken;
+# every CLI deploy since 2026-05-14 has therefore missed the cron
+# schedule. This workflow runs the same /api/culture/cron-refresh
+# endpoint from GitHub-hosted runners — completely independent of
+# Vercel's scheduler.
+#
+# To rotate the bearer:
+#   gh secret set CULTURE_API_SECRET --body "<new-value>"
+# To trigger an ad-hoc run:
+#   gh workflow run cron-refresh.yml
+# (or use the "Run workflow" button on the Actions tab)
+
+on:
+  schedule:
+    # 06:00 UTC daily = 08:00 NL summer time / 07:00 NL winter time.
+    # Matches what vercel.json originally configured. GitHub-hosted
+    # runners can drift up to ~10 minutes from the scheduled time
+    # under heavy load, which is acceptable for a daily refresh.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why are you running this manually?"
+        required: false
+        default: "manual"
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Verify secret is configured
+        run: |
+          if [ -z "${{ secrets.CULTURE_API_SECRET }}" ]; then
+            echo "::error::CULTURE_API_SECRET is not set. Add it via:"
+            echo "  gh secret set CULTURE_API_SECRET --body '<your-API_SECRET-from-.env.local>'"
+            exit 1
+          fi
+          echo "Secret present."
+
+      - name: Call /api/culture/cron-refresh
+        env:
+          BEARER: ${{ secrets.CULTURE_API_SECRET }}
+          REASON: ${{ inputs.reason || 'scheduled' }}
+        run: |
+          set -euo pipefail
+          URL="https://action-culture-radar.vercel.app/api/culture/cron-refresh"
+          echo "Triggering daily refresh ($REASON) at $(date -u +%Y-%m-%dT%H:%M:%SZ) UTC"
+
+          # The endpoint can run up to ~5 minutes (scrape + extract + brief
+          # backfill + enrichment). We give curl 10 minutes to absorb the
+          # full response. Output is captured for inspection and a
+          # health-check is run on the JSON payload.
+          HTTP=$(curl -sS -o /tmp/cron.json -w '%{http_code}' \
+            -X GET \
+            -H "Authorization: Bearer $BEARER" \
+            --max-time 600 \
+            "$URL")
+          echo "HTTP $HTTP"
+
+          if [ "$HTTP" -ne 200 ]; then
+            echo "::error::Cron refresh returned HTTP $HTTP"
+            head -c 2000 /tmp/cron.json || true
+            exit 1
+          fi
+
+          # Pretty-print the summary so it's visible in the Actions log
+          if command -v jq >/dev/null 2>&1; then
+            jq '{ok, durationMs, fetchError, fetchSummary, briefsBriefed, articleDatesArchived, trendsArchived, snapshotsInserted}' \
+              /tmp/cron.json
+          else
+            head -c 4000 /tmp/cron.json
+          fi
+
+          # Fail the workflow if the refresh self-reported a fetch error,
+          # so we get a notification rather than silent breakage.
+          if jq -e '.ok == false or .fetchError != null' /tmp/cron.json >/dev/null 2>&1; then
+            echo "::warning::Refresh completed but flagged an issue."
+          fi
+
+      - name: Trigger second extract drain
+        if: success()
+        env:
+          BEARER: ${{ secrets.CULTURE_API_SECRET }}
+        run: |
+          # cron-refresh runs ONE /api/culture/extract pass. Heavy scrape
+          # days leave a backlog. One additional drain here keeps the
+          # queue near zero by mid-morning.
+          curl -sS -X POST \
+            -H "Authorization: Bearer $BEARER" \
+            -H 'Content-Type: application/json' \
+            --max-time 320 \
+            -d '{"limit":200,"rerank":true}' \
+            "https://action-culture-radar.vercel.app/api/culture/extract" \
+            | head -c 500
+          echo
