@@ -32,6 +32,7 @@ import { analyzeSourceContent } from '@/lib/culture-ai'
 import { CULTURE_GEMINI_MODEL } from '@/lib/constants'
 import { fetchGoogleTrends, type GoogleTrendItem } from '@/lib/google-trends'
 import { perplexitySearch, perplexityToMarkdown } from '@/lib/perplexity'
+import { scrapeStaticHtml } from '@/lib/native-html-scraper'
 import {
   fetchCreativeCenterHashtags,
   industryToCategory,
@@ -304,6 +305,8 @@ export async function scrapeSource(source: SourceRow, lookbackDays: number): Pro
   //   - google_trends_api      → direct API call, no Firecrawl
   //   - perplexity_query       → ask Perplexity, use answer + citations as content
   //   - tiktok_cc_hashtag      → scrape TikTok Creative Center SSR, real metrics
+  //   - reddit                 → Reddit JSON API, no auth
+  //   - blog / aggregator      → native HTML fetch, fallback to Firecrawl on SPA-shaped failure
   //   - everything else        → Firecrawl markdown scrape
   if (source.source_type === 'google_trends_api') {
     return scrapeGoogleTrends(source)
@@ -324,6 +327,18 @@ export async function scrapeSource(source: SourceRow, lookbackDays: number): Pro
   // Bypasses Gemini hallucination for the video list.
   if (source.url.includes('/discover/')) {
     return scrapeTikTokDiscover(source)
+  }
+
+  // ── Blog + aggregator: try native HTML fetch first ────────────────────
+  // Saves a Firecrawl credit per scrape on the ~35 sources that are just
+  // server-rendered blogs. Falls back to Firecrawl when the native fetch
+  // returns too little usable content (SPA, blocked, redirected to a
+  // sign-in wall, etc.) or hits a transport error.
+  if (source.source_type === 'blog' || source.source_type === 'aggregator') {
+    const native = await scrapeStaticHtml(source)
+    if (native && native.ok) return native
+    // null = not enough content; non-null+!ok = transport error.
+    // In both cases fall through to Firecrawl.
   }
 
   const scrapeUrl = widenUrlForLookback(source.url, source.source_type, lookbackDays)
