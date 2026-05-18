@@ -1,26 +1,22 @@
 name: Culture Radar daily refresh
 
-# Independent fallback for the Vercel cron, which has stopped firing
-# (see docs/night-reports/2026-05-14.md Phase 4). Vercel only registers
-# crons on Git-integration deploys and our GitHub webhook is broken;
-# every CLI deploy since 2026-05-14 has therefore missed the cron
-# schedule. This workflow runs the same /api/culture/cron-refresh
-# endpoint from GitHub-hosted runners — completely independent of
-# Vercel's scheduler.
+# Independent fallback for the Vercel cron, which stopped firing on
+# 2026-05-14 (Git-integration deploys disabled). Runs the same daily
+# refresh as /api/culture/cron-refresh, but split into discrete phases
+# so no single Vercel function call hits the 5-minute timeout.
 #
-# To rotate the bearer:
-#   gh secret set CULTURE_API_SECRET --body "<new-value>"
-# To trigger an ad-hoc run:
+# Each step below targets its own endpoint, giving each phase a fresh
+# 300s function budget. Earlier we hit FUNCTION_INVOCATION_TIMEOUT
+# trying to do scrape + extract + briefs + enrichment in one call.
+#
+# Rotate the bearer:
+#   gh secret set CULTURE_API_SECRET --body "<new>"
+# Trigger manually:
 #   gh workflow run cron-refresh.yml
-# (or use the "Run workflow" button on the Actions tab)
 
 on:
   schedule:
-    # 06:00 UTC daily = 08:00 NL summer time / 07:00 NL winter time.
-    # Matches what vercel.json originally configured. GitHub-hosted
-    # runners can drift up to ~10 minutes from the scheduled time
-    # under heavy load, which is acceptable for a daily refresh.
-    - cron: "0 6 * * *"
+    - cron: "0 6 * * *"   # 06:00 UTC = 08:00 NL summer / 07:00 NL winter
   workflow_dispatch:
     inputs:
       reason:
@@ -31,73 +27,189 @@ on:
 permissions:
   contents: read
 
+env:
+  BASE_URL: "https://action-culture-radar.vercel.app"
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 30
     steps:
       - name: Verify secret is configured
         run: |
           if [ -z "${{ secrets.CULTURE_API_SECRET }}" ]; then
-            echo "::error::CULTURE_API_SECRET is not set. Add it via:"
-            echo "  gh secret set CULTURE_API_SECRET --body '<your-API_SECRET-from-.env.local>'"
+            echo "::error::CULTURE_API_SECRET is not set. Run: gh secret set CULTURE_API_SECRET --body '<API_SECRET>'"
             exit 1
           fi
-          echo "Secret present."
 
-      - name: Call /api/culture/cron-refresh
+      # ── Phase 1: scrape all active sources ────────────────────────────────
+      - name: Scrape sources
         env:
           BEARER: ${{ secrets.CULTURE_API_SECRET }}
           REASON: ${{ inputs.reason || 'scheduled' }}
         run: |
           set -euo pipefail
-          URL="https://action-culture-radar.vercel.app/api/culture/cron-refresh"
-          echo "Triggering daily refresh ($REASON) at $(date -u +%Y-%m-%dT%H:%M:%SZ) UTC"
-
-          # The endpoint can run up to ~5 minutes (scrape + extract + brief
-          # backfill + enrichment). We give curl 10 minutes to absorb the
-          # full response. Output is captured for inspection and a
-          # health-check is run on the JSON payload.
-          HTTP=$(curl -sS -o /tmp/cron.json -w '%{http_code}' \
-            -X GET \
-            -H "Authorization: Bearer $BEARER" \
-            --max-time 600 \
-            "$URL")
-          echo "HTTP $HTTP"
-
-          if [ "$HTTP" -ne 200 ]; then
-            echo "::error::Cron refresh returned HTTP $HTTP"
-            head -c 2000 /tmp/cron.json || true
+          echo "Scraping at $(date -u +%H:%M:%SZ)"
+          curl -sS -o /tmp/p.json -w 'HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+            --max-time 320 \
+            -d "{\"triggeredBy\":\"gha-${REASON}\"}" \
+            "$BASE_URL/api/culture/scrape"
+          jq '{okCount, failedCount, durationMs, jobId}' /tmp/p.json || head -c 500 /tmp/p.json
+          if jq -e '.ok != true' /tmp/p.json >/dev/null 2>&1; then
+            echo "::error::Scrape phase reported ok=false"
             exit 1
           fi
 
-          # Pretty-print the summary so it's visible in the Actions log
-          if command -v jq >/dev/null 2>&1; then
-            jq '{ok, durationMs, fetchError, fetchSummary, briefsBriefed, articleDatesArchived, trendsArchived, snapshotsInserted}' \
-              /tmp/cron.json
-          else
-            head -c 4000 /tmp/cron.json
-          fi
-
-          # Fail the workflow if the refresh self-reported a fetch error,
-          # so we get a notification rather than silent breakage.
-          if jq -e '.ok == false or .fetchError != null' /tmp/cron.json >/dev/null 2>&1; then
-            echo "::warning::Refresh completed but flagged an issue."
-          fi
-
-      - name: Trigger second extract drain
+      # ── Phase 2: drain extract queue (Gemini-heavy, may need 2 passes) ────
+      - name: Extract — pass 1
         if: success()
         env:
           BEARER: ${{ secrets.CULTURE_API_SECRET }}
         run: |
-          # cron-refresh runs ONE /api/culture/extract pass. Heavy scrape
-          # days leave a backlog. One additional drain here keeps the
-          # queue near zero by mid-morning.
-          curl -sS -X POST \
-            -H "Authorization: Bearer $BEARER" \
-            -H 'Content-Type: application/json' \
+          set -euo pipefail
+          echo "Extract pass 1 at $(date -u +%H:%M:%SZ)"
+          curl -sS -o /tmp/p.json -w 'HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
             --max-time 320 \
             -d '{"limit":200,"rerank":true}' \
-            "https://action-culture-radar.vercel.app/api/culture/extract" \
-            | head -c 500
-          echo
+            "$BASE_URL/api/culture/extract"
+          jq '{processed, inserted, updated, queueRemaining}' /tmp/p.json || head -c 500 /tmp/p.json
+
+      - name: Extract — pass 2 (drain backlog)
+        if: success()
+        env:
+          BEARER: ${{ secrets.CULTURE_API_SECRET }}
+        run: |
+          set -euo pipefail
+          echo "Extract pass 2 at $(date -u +%H:%M:%SZ)"
+          curl -sS -o /tmp/p.json -w 'HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+            --max-time 320 \
+            -d '{"limit":200,"rerank":true}' \
+            "$BASE_URL/api/culture/extract"
+          jq '{processed, inserted, updated, queueRemaining}' /tmp/p.json || head -c 500 /tmp/p.json
+
+      # ── Phase 3: verify (fabricated/generic check), growth scores ─────────
+      - name: Verify trends + compute growth
+        if: success()
+        env:
+          BEARER: ${{ secrets.CULTURE_API_SECRET }}
+        run: |
+          set -euo pipefail
+          echo "Verify+growth at $(date -u +%H:%M:%SZ)"
+          curl -sS -o /tmp/v.json -w 'verify HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+            --max-time 320 -d '{"limit":120}' "$BASE_URL/api/culture/verify-trends"
+          jq '.verdicts' /tmp/v.json || head -c 300 /tmp/v.json
+          curl -sS -o /tmp/g.json -w 'growth HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+            --max-time 180 -d '{}' "$BASE_URL/api/culture/compute-growth"
+
+      # ── Phase 4: enrichment (country / vibe / subculture / bundles) ───────
+      - name: Enrich countries
+        if: success()
+        env:
+          BEARER: ${{ secrets.CULTURE_API_SECRET }}
+        run: |
+          curl -sS -o /tmp/p.json -w 'countries HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+            --max-time 320 -d '{"limit":120}' "$BASE_URL/api/culture/enrich-countries"
+          jq '.tagged,.dropped' /tmp/p.json || head -c 300 /tmp/p.json
+
+      - name: Enrich vibes
+        if: success()
+        env:
+          BEARER: ${{ secrets.CULTURE_API_SECRET }}
+        run: |
+          curl -sS -o /tmp/p.json -w 'vibes HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+            --max-time 320 -d '{"limit":120}' "$BASE_URL/api/culture/enrich-vibes"
+          jq '.tagged' /tmp/p.json || head -c 300 /tmp/p.json
+
+      - name: Enrich subcultures
+        if: success()
+        env:
+          BEARER: ${{ secrets.CULTURE_API_SECRET }}
+        run: |
+          curl -sS -o /tmp/p.json -w 'subs HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+            --max-time 320 -d '{"limit":120}' "$BASE_URL/api/culture/enrich-subcultures"
+
+      - name: Recompute bundles
+        if: success()
+        env:
+          BEARER: ${{ secrets.CULTURE_API_SECRET }}
+        run: |
+          curl -sS -o /tmp/p.json -w 'bundles HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+            --max-time 180 -d '{}' "$BASE_URL/api/culture/recompute-bundles"
+
+      # ── Phase 5: briefs (Gemini-heavy, in batches of 20) ──────────────────
+      - name: Generate Action briefs
+        if: success()
+        env:
+          BEARER: ${{ secrets.CULTURE_API_SECRET }}
+        run: |
+          set -euo pipefail
+          echo "Briefs at $(date -u +%H:%M:%SZ)"
+          # Three batches per run gets the top ~60 newly-extracted trends.
+          # Tail trends fall behind a few days but that's fine — the
+          # magazine only surfaces the top anyway.
+          for i in 1 2 3; do
+            echo "  batch $i"
+            curl -sS -o /tmp/b.json -w '  HTTP %{http_code} (%{time_total}s)\n' \
+              -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+              --max-time 240 -d '{"limit":20}' "$BASE_URL/api/culture/backfill-briefs"
+            jq -c '{briefed, failed, processed}' /tmp/b.json || head -c 200 /tmp/b.json
+          done
+
+      # ── Phase 6: snapshots + lifecycle (cheap SQL writes) ─────────────────
+      - name: Snapshots + lifecycle
+        if: success()
+        env:
+          BEARER: ${{ secrets.CULTURE_API_SECRET }}
+        run: |
+          curl -sS -o /tmp/s.json -w 'snap-trends HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+            --max-time 180 -d '{}' "$BASE_URL/api/culture/snapshot-trends"
+          curl -sS -o /tmp/s.json -w 'snap-gt HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+            --max-time 180 -d '{}' "$BASE_URL/api/culture/snapshot-gt"
+          curl -sS -o /tmp/s.json -w 'lifecycle HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+            --max-time 180 -d '{}' "$BASE_URL/api/culture/compute-lifecycle"
+
+      # ── Phase 7: embeddings + mindmaps + URL verify ────────────────────────
+      - name: Embed + mindmaps + URL verify
+        if: success()
+        env:
+          BEARER: ${{ secrets.CULTURE_API_SECRET }}
+        run: |
+          curl -sS -o /tmp/e.json -w 'embed HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+            --max-time 180 -d '{"limit":120}' "$BASE_URL/api/culture/embed"
+          curl -sS -o /tmp/m.json -w 'mindmaps HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+            --max-time 320 -d '{"limit":60}' "$BASE_URL/api/culture/enrich-mindmaps"
+          curl -sS -o /tmp/u.json -w 'urls HTTP %{http_code} (%{time_total}s)\n' \
+            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+            --max-time 320 -d '{"limit":40}' "$BASE_URL/api/culture/verify-urls"
+
+      # ── Phase 8: article-date verification (defends against stale roundups)
+      - name: Article-date verification
+        if: success()
+        env:
+          BEARER: ${{ secrets.CULTURE_API_SECRET }}
+        run: |
+          curl -sS -o /tmp/a.json -w 'article-dates HTTP %{http_code} (%{time_total}s)\n' \
+            -X GET -H "Authorization: Bearer $BEARER" \
+            --max-time 320 \
+            "$BASE_URL/api/culture/verify-article-dates?dryRun=0&limit=200&maxAgeDays=30&concurrency=8"
+          jq '{scanned, archived, fresh, stale, inconclusive}' /tmp/a.json || head -c 300 /tmp/a.json
+
+      - name: Pipeline summary
+        if: always()
+        run: |
+          echo "Daily refresh finished at $(date -u +%H:%M:%SZ)"
+          echo "Check /api/culture/scrape/status?latest=1 and /api/culture/source-productivity for follow-up health."
