@@ -27,12 +27,12 @@ export type FlagName = (typeof FLAGS)[number]
 export function flag(name: FlagName): boolean {
   // Server-side env lookup
   if (typeof window === 'undefined') {
-    const v = process.env[`FLAG_${name}`]
-    return v === '1' || v === 'true'
+    const v = (process.env[`FLAG_${name}`] ?? '').trim().toLowerCase()
+    return v === '1' || v === 'true' || v === 'on' || v === 'yes'
   }
   // Client-side mirror (must be NEXT_PUBLIC_ for Next.js to inline)
-  const v = process.env[`NEXT_PUBLIC_FLAG_${name}`]
-  return v === '1' || v === 'true'
+  const v = (process.env[`NEXT_PUBLIC_FLAG_${name}`] ?? '').trim().toLowerCase()
+  return v === '1' || v === 'true' || v === 'on' || v === 'yes'
 }
 
 /**
