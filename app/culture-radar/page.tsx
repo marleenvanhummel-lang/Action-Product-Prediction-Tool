@@ -6,6 +6,9 @@ import type { CultureSource, CultureTrend } from '@/types/culture'
 import { styleFor, LIFECYCLE_VISUAL } from './category-style'
 import { CompactTrend } from './trend-cards'
 import { ScrapeProgressPanel } from '@/components/culture/ScrapeProgressPanel'
+import { DataFreshnessBanner } from '@/components/culture/DataFreshnessBanner'
+import { SystemHealthFooter } from '@/components/culture/SystemHealthFooter'
+import { flag } from '@/lib/feature-flags'
 
 type View = 'daily' | 'weekly' | 'all' | 'emerging' | 'inspiration' | 'gtrends'
 
@@ -366,6 +369,9 @@ export default function CultureRadarPage() {
 
   return (
     <div className="jai-app" style={{ minHeight: '100vh' }}>
+      {/* vNext system trust banner (behind FLAG_VNEXT_SYSTEM_BANNERS) */}
+      {flag('VNEXT_SYSTEM_BANNERS') && <DataFreshnessBanner />}
+
       {/* ── JackandAI hero header ── */}
       <div style={{ background: '#000', color: '#FFFDF3', padding: '40px 40px 28px', paddingRight: 240 }}>
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
@@ -762,6 +768,9 @@ export default function CultureRadarPage() {
 
       {/* ── Live scrape progress (auto-shows when a job is running) ── */}
       <ScrapeProgressPanel />
+
+      {/* vNext system health footer (behind FLAG_VNEXT_SYSTEM_BANNERS) */}
+      {flag('VNEXT_SYSTEM_BANNERS') && <SystemHealthFooter />}
     </div>
   )
 }
