@@ -95,6 +95,11 @@ interface TrendRowDB {
   subculture: string | null
   growth_score: number | null
   mindmap: CultureTrend['mindmap']
+  // vNext columns (added 2026-06-08)
+  confidence_score?: number | null
+  action_fit_score?: number | null
+  decision_state?: string | null
+  recommended_action?: string | null
 }
 
 interface ExistingTrendForUpsert {
@@ -502,7 +507,8 @@ export async function listTrends(args: ListTrendsArgs): Promise<TrendRowDB[]> {
             source_ids, source_names, daily_rank, weekly_rank, rank_date,
             rank_week, estimated_views, status, brand_brief, country_relevance,
             feedback_useful, feedback_generic, thumbnail_meta, mindmap, bundle_key, vibe,
-            subculture, growth_score
+            subculture, growth_score,
+            confidence_score, action_fit_score, decision_state, recommended_action
        FROM culture_trends
       WHERE ${conditions.join(' AND ')}
       ORDER BY ${orderBy}
@@ -575,6 +581,11 @@ export function rowToTrend(row: TrendRowDB): CultureTrend {
     vibe: (row.vibe ?? null) as CultureTrend['vibe'],
     subculture: row.subculture ?? null,
     growthScore: row.growth_score == null ? null : Number(row.growth_score),
+    // vNext fields — optional, projected when SELECT includes them
+    confidenceScore: row.confidence_score == null ? null : Number(row.confidence_score),
+    actionFitScore: row.action_fit_score == null ? null : Number(row.action_fit_score),
+    decisionState: (row.decision_state ?? undefined) as CultureTrend['decisionState'],
+    recommendedAction: (row.recommended_action ?? null) as CultureTrend['recommendedAction'],
     mindmap: row.mindmap ?? null,
   }
 }

@@ -93,6 +93,16 @@ export interface CultureTrend {
   vibe: 'unhinged' | 'aesthetic' | 'humor' | 'wholesome' | 'emotional' | 'informational' | 'product' | 'sport' | null
   subculture: string | null
   growthScore: number | null  // 0-10 predictive score: probability this trend grows further
+
+  // vNext (added 2026-06-08). Null on rows scored before vNext rolled out.
+  confidenceScore?: number | null         // 0-100 explainable trust score
+  actionFitScore?: number | null          // 0-100 should Action care?
+  decisionState?:
+    | 'monitor' | 'validate' | 'test' | 'activate' | 'measure' | 'archive'
+  recommendedAction?:
+    | 'act_content' | 'act_product' | 'act_promo'
+    | 'monitor' | 'validate' | 'ignore' | null
+
   mindmap: {
     origin: Array<{ label: string; detail?: string; url?: string }>
     spreading: Array<{ label: string; detail?: string; url?: string }>

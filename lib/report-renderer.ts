@@ -17,6 +17,7 @@ import { getTodaysCohort } from '@/lib/creator-radar'
 import { generateHeroImagesForReport } from '@/lib/trend-image'
 import { fetchPulseVideos, type DiscoverVideoForReport } from '@/lib/tiktok-pulse-videos'
 import type { ActionBrief, CultureTrend, CultureMoment } from '@/types/culture'
+import { flag } from '@/lib/feature-flags'
 
 interface CreatorForReport {
   handle: string
@@ -54,6 +55,11 @@ interface TrendForReport {
   subculture?: string | null
   vibe?: string | null
   growth_score?: number | null
+  // vNext columns
+  confidence_score?: number | null
+  action_fit_score?: number | null
+  decision_state?: string | null
+  recommended_action?: string | null
 }
 
 interface MomentForReport {
@@ -187,7 +193,8 @@ export async function fetchReportData(): Promise<ReportData> {
             weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
             brand_brief, source_names, estimated_views, country_relevance,
             first_seen_at::TEXT AS first_seen_at, content_type, mindmap,
-            subculture, vibe, growth_score
+            subculture, vibe, growth_score,
+            confidence_score, action_fit_score, decision_state, recommended_action
        FROM culture_trends
       WHERE rank_week = $1 AND status = 'active' AND daily_rank IS NOT NULL
         ${FRESH_URL_FILTER}
@@ -200,7 +207,8 @@ export async function fetchReportData(): Promise<ReportData> {
             weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
             brand_brief, source_names, estimated_views, country_relevance,
             first_seen_at::TEXT AS first_seen_at, content_type, mindmap,
-            subculture, vibe, growth_score
+            subculture, vibe, growth_score,
+            confidence_score, action_fit_score, decision_state, recommended_action
        FROM culture_trends
       WHERE rank_week = $1 AND status = 'active' AND weekly_rank IS NOT NULL
         AND (daily_rank IS NULL OR daily_rank > 10)
@@ -216,7 +224,8 @@ export async function fetchReportData(): Promise<ReportData> {
             weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
             brand_brief, source_names, estimated_views, country_relevance,
             first_seen_at::TEXT AS first_seen_at, content_type, mindmap,
-            subculture, vibe, growth_score
+            subculture, vibe, growth_score,
+            confidence_score, action_fit_score, decision_state, recommended_action
        FROM culture_trends
       WHERE status = 'active'
         AND content_type IN ('format','meme','aesthetic','behavior')
@@ -232,7 +241,8 @@ export async function fetchReportData(): Promise<ReportData> {
             weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
             brand_brief, source_names, estimated_views, country_relevance,
             first_seen_at::TEXT AS first_seen_at, content_type, mindmap,
-            subculture, vibe, growth_score
+            subculture, vibe, growth_score,
+            confidence_score, action_fit_score, decision_state, recommended_action
        FROM culture_trends
       WHERE status = 'active' AND popularity_score < 7 AND freshness_score >= 7
         AND first_seen_at >= NOW() - INTERVAL '7 days'
@@ -282,7 +292,8 @@ export async function fetchReportData(): Promise<ReportData> {
             weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
             brand_brief, source_names, estimated_views, country_relevance,
             first_seen_at::TEXT AS first_seen_at, content_type, mindmap,
-            subculture, vibe, growth_score
+            subculture, vibe, growth_score,
+            confidence_score, action_fit_score, decision_state, recommended_action
        FROM culture_trends
       WHERE status = 'active' AND growth_score >= 7
         AND first_seen_at >= NOW() - INTERVAL '7 days'
@@ -297,7 +308,8 @@ export async function fetchReportData(): Promise<ReportData> {
             weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
             brand_brief, source_names, estimated_views, country_relevance,
             first_seen_at::TEXT AS first_seen_at, content_type, mindmap,
-            subculture, vibe, growth_score
+            subculture, vibe, growth_score,
+            confidence_score, action_fit_score, decision_state, recommended_action
        FROM culture_trends
       WHERE status = 'active' AND subculture IS NOT NULL
         AND first_seen_at >= NOW() - INTERVAL '7 days'
@@ -335,7 +347,8 @@ export async function fetchReportData(): Promise<ReportData> {
                 weekly_rank, hashtags, example_urls, thumbnail_url, thumbnail_meta,
                 brand_brief, source_names, estimated_views, country_relevance,
                 first_seen_at::TEXT AS first_seen_at, content_type, mindmap,
-                subculture, vibe, growth_score
+                subculture, vibe, growth_score,
+            confidence_score, action_fit_score, decision_state, recommended_action
            FROM culture_trends
           WHERE status = 'active'
             AND country_relevance IS NOT NULL
@@ -1224,6 +1237,191 @@ function renderSubcultureSection(bySubculture: ReportData['bySubculture']): stri
 </td></tr>`
 }
 
+// ── vNext Executive Summary ────────────────────────────────────────────
+//
+// Section 5 of the PRD: lead the magazine with three things to act on,
+// two to monitor, and one to skip. Computed from the daily top 10 +
+// breakout pool. Only renders when FLAG_VNEXT_MAGAZINE is on.
+
+interface ExecPick {
+  trend: TrendForReport
+  reason: string
+}
+
+interface ExecSummary {
+  act: ExecPick[]
+  monitor: ExecPick[]
+  skip: ExecPick | null
+}
+
+/**
+ * Pick three trends to act on, two to monitor, one to skip.
+ * Avoids duplicate trends across buckets.
+ */
+function deriveExecSummary(data: ReportData): ExecSummary {
+  const pool = [...data.dailyTop10, ...data.breakout].filter(
+    (t, i, arr) => arr.findIndex((x) => x.id === t.id) === i,
+  )
+  const used = new Set<string>()
+
+  const act = pool
+    .filter(
+      (t) =>
+        (t.confidence_score ?? 0) >= 50 &&
+        (t.action_fit_score ?? 0) >= 50 &&
+        !used.has(t.id),
+    )
+    .sort(
+      (a, b) =>
+        (b.action_fit_score ?? 0) + (b.confidence_score ?? 0) -
+        ((a.action_fit_score ?? 0) + (a.confidence_score ?? 0)),
+    )
+    .slice(0, 3)
+    .map((trend) => {
+      used.add(trend.id)
+      return {
+        trend,
+        reason: reasonForAct(trend),
+      }
+    })
+
+  const monitor = pool
+    .filter(
+      (t) =>
+        !used.has(t.id) &&
+        (t.action_fit_score ?? 0) >= 50 &&
+        (t.confidence_score ?? 0) < 50,
+    )
+    .sort((a, b) => (b.action_fit_score ?? 0) - (a.action_fit_score ?? 0))
+    .slice(0, 2)
+    .map((trend) => {
+      used.add(trend.id)
+      return {
+        trend,
+        reason: reasonForMonitor(trend),
+      }
+    })
+
+  let skip: ExecPick | null = null
+  const skipPool = pool
+    .filter(
+      (t) =>
+        !used.has(t.id) &&
+        ((t.confidence_score ?? 100) < 30 ||
+          (t.action_fit_score ?? 100) < 30),
+    )
+    .sort((a, b) => (b.popularity_score ?? 0) - (a.popularity_score ?? 0))
+  if (skipPool[0]) {
+    skip = {
+      trend: skipPool[0],
+      reason: reasonForSkip(skipPool[0]),
+    }
+  }
+
+  return { act, monitor, skip }
+}
+
+function reasonForAct(t: TrendForReport): string {
+  const bits: string[] = []
+  if ((t.action_fit_score ?? 0) >= 70) bits.push(`Action Fit ${Math.round(t.action_fit_score!)}/100`)
+  if ((t.confidence_score ?? 0) >= 60) bits.push(`confidence ${Math.round(t.confidence_score!)}/100`)
+  if ((t.growth_score ?? 0) >= 7) bits.push('high growth')
+  if ((t.country_relevance?.length ?? 0) >= 3) bits.push(`live in ${t.country_relevance!.length} markets`)
+  return bits.join(' · ') || 'Strong overall fit'
+}
+
+function reasonForMonitor(t: TrendForReport): string {
+  const bits: string[] = []
+  if ((t.action_fit_score ?? 0) >= 60) bits.push(`Action Fit ${Math.round(t.action_fit_score!)}/100`)
+  if ((t.confidence_score ?? 0) < 50) bits.push(`confidence only ${Math.round(t.confidence_score ?? 0)}/100`)
+  if (!t.country_relevance?.length) bits.push('country signal still unclear')
+  return bits.join(' · ') || 'Promising but needs more signal'
+}
+
+function reasonForSkip(t: TrendForReport): string {
+  const reasons: string[] = []
+  if ((t.confidence_score ?? 100) < 30) reasons.push(`low confidence (${Math.round(t.confidence_score ?? 0)}/100)`)
+  if ((t.action_fit_score ?? 100) < 30) reasons.push(`weak Action Fit (${Math.round(t.action_fit_score ?? 0)}/100)`)
+  return reasons.join(' + ') || 'Borderline signal'
+}
+
+function renderExecSummary(data: ReportData): string {
+  const ex = deriveExecSummary(data)
+  if (ex.act.length === 0 && ex.monitor.length === 0 && !ex.skip) return ''
+
+  const actHtml = ex.act
+    .map(
+      (p, i) => `
+        <tr>
+          <td valign="top" style="padding:14px 0;border-bottom:1px solid #00000015;">
+            <table cellpadding="0" cellspacing="0" border="0" width="100%">
+              <tr>
+                <td valign="top" width="48" style="font-family:'Archivo Black',sans-serif;font-size:22px;color:#FF1300;letter-spacing:-0.03em;">0${i + 1}</td>
+                <td valign="top">
+                  <p style="margin:0 0 4px;font-family:'Archivo Black',sans-serif;font-size:16px;line-height:1.15;color:#000;text-transform:uppercase;letter-spacing:-0.015em;">${escapeHtml(p.trend.name)}</p>
+                  <p style="margin:0;font-family:'Inter',sans-serif;font-size:12px;color:#444;line-height:1.45;">${escapeHtml(p.reason)}</p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>`,
+    )
+    .join('')
+
+  const monitorHtml = ex.monitor
+    .map(
+      (p) => `
+        <tr>
+          <td valign="top" style="padding:10px 0;border-bottom:1px dashed #00000020;">
+            <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:13px;color:#000;text-transform:uppercase;letter-spacing:-0.015em;">${escapeHtml(p.trend.name)}</p>
+            <p style="margin:2px 0 0;font-family:'Inter',sans-serif;font-size:11px;color:#666;">${escapeHtml(p.reason)}</p>
+          </td>
+        </tr>`,
+    )
+    .join('')
+
+  const skipHtml = ex.skip
+    ? `
+        <tr>
+          <td valign="top" style="padding:10px 0;">
+            <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:13px;color:#666;text-transform:uppercase;letter-spacing:-0.015em;text-decoration:line-through;">${escapeHtml(ex.skip.trend.name)}</p>
+            <p style="margin:2px 0 0;font-family:'Inter',sans-serif;font-size:11px;color:#999;">${escapeHtml(ex.skip.reason)}</p>
+          </td>
+        </tr>`
+    : ''
+
+  return `
+<tr>
+  <td style="padding:36px 40px 8px;background:#FFFDF3;">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr>
+        <td>
+          <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.25em;color:#FF1300;text-transform:uppercase;">Executive summary · vNext</p>
+          <h2 style="margin:8px 0 18px;font-family:'Archivo Black',sans-serif;font-size:30px;line-height:0.95;text-transform:uppercase;letter-spacing:-0.025em;color:#000;">
+            Three to act<span style="color:#FF1300;">.</span> Two to monitor<span style="color:#FF1300;">.</span> One to skip<span style="color:#FF1300;">.</span>
+          </h2>
+
+          <p style="margin:0 0 8px;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.15em;color:#FF1300;text-transform:uppercase;">Act now</p>
+          <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:18px;">
+            ${actHtml || `<tr><td style="padding:10px 0;color:#999;font-family:Inter,sans-serif;font-size:12px;">No confident & relevant trends in this week's pool — increase scrape volume or wait for fresh signal.</td></tr>`}
+          </table>
+
+          <p style="margin:0 0 8px;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.15em;color:#000;text-transform:uppercase;">Monitor</p>
+          <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:18px;">
+            ${monitorHtml || `<tr><td style="padding:10px 0;color:#999;font-family:Inter,sans-serif;font-size:12px;">Nothing in the monitor band right now.</td></tr>`}
+          </table>
+
+          <p style="margin:0 0 8px;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.15em;color:#666;text-transform:uppercase;">Skip</p>
+          <table cellpadding="0" cellspacing="0" border="0" width="100%">
+            ${skipHtml || `<tr><td style="padding:10px 0;color:#999;font-family:Inter,sans-serif;font-size:12px;">No clear false positives this week.</td></tr>`}
+          </table>
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>`
+}
+
 // ── Editorial features ────────────────────────────────────────────────
 
 function renderDropCapLetter(): string {
@@ -1859,6 +2057,10 @@ export function renderReportHtml(data: ReportData): string {
             </table>
           </td>
         </tr>
+
+        <!-- vNext executive summary (behind FLAG_VNEXT_MAGAZINE) -->
+        ${flag('VNEXT_MAGAZINE') ? renderExecSummary(data) : ''}
+
         <!-- Red accent strip -->
         <tr><td style="background:#FF1300;height:8px;line-height:0;font-size:0;">&nbsp;</td></tr>
 

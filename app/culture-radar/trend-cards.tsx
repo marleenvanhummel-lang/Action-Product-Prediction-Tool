@@ -5,6 +5,10 @@ import { apiFetch } from '@/lib/api-client'
 import type { CultureTrend } from '@/types/culture'
 import { TrendVisual, paletteFor } from './trend-visual'
 import { computeMomentum } from '@/lib/trend-momentum'
+import { ConfidenceDisc } from '@/components/culture/ConfidenceDisc'
+import { DecisionStateMenu } from '@/components/culture/DecisionStateMenu'
+import { flag } from '@/lib/feature-flags'
+import type { DecisionState } from '@/types/decision'
 
 // Extended trend type with optional bundle variants
 type TrendWithVariants = CultureTrend & { bundleVariants?: CultureTrend[] }
@@ -49,6 +53,37 @@ function SubcultureChip({ subculture }: { subculture: string | null }) {
 }
 
 // ── Growth score badge (predictive) ───────────────────────────────────────
+
+/**
+ * vNext: small pill showing the Action Fit score (0-100). Only renders
+ * when FLAG_VNEXT_CONFIDENCE is on. Tier-coloured like the GrowthBadge.
+ */
+function ActionFitChip({ score }: { score: number | null }) {
+  if (score == null) return null
+  const n = Math.round(score)
+  let bg: string, fg: string, label: string
+  if (n >= 70) { bg = '#000'; fg = '#FFFDF3'; label = `FIT ${n}` }
+  else if (n >= 50) { bg = '#FF1300'; fg = '#FFFDF3'; label = `FIT ${n}` }
+  else { bg = '#FFFDF3'; fg = '#666'; label = `FIT ${n}` }
+  return (
+    <span
+      title={`Action Fit ${n}/100 — how relevant this trend is to Action's product range, markets, brand voice and audience`}
+      style={{
+        fontFamily: 'var(--font-jai-display)',
+        fontSize: 9,
+        letterSpacing: '0.1em',
+        padding: '2px 6px',
+        background: bg,
+        color: fg,
+        textTransform: 'uppercase',
+        whiteSpace: 'nowrap',
+        border: bg === '#FFFDF3' ? '1px solid #00000020' : 'none',
+      }}
+    >
+      {label}
+    </span>
+  )
+}
 
 function GrowthBadge({ score }: { score: number | null }) {
   if (score == null) return null
@@ -581,7 +616,7 @@ export function CompactTrend({ trend }: { trend: TrendWithVariants }) {
           onClick={() => setExpanded((v) => !v)}
           style={{ flex: 1, padding: '12px 16px', display: 'flex', flexDirection: 'column', justifyContent: 'center', cursor: 'pointer' }}
         >
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {trend.dailyRank && (
               <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 14, color: '#FF1300', letterSpacing: '-0.02em' }}>
                 #{trend.dailyRank}
@@ -592,6 +627,13 @@ export function CompactTrend({ trend }: { trend: TrendWithVariants }) {
             <VibeChip vibe={trend.vibe} />
             <SubcultureChip subculture={trend.subculture} />
             <MomentumPill trend={trend} />
+            {/* vNext: Action Fit triptych + decision state (behind flags) */}
+            {flag('VNEXT_CONFIDENCE') && trend.actionFitScore != null && (
+              <ActionFitChip score={trend.actionFitScore} />
+            )}
+            {flag('VNEXT_DECISION_STATE') && trend.decisionState && (
+              <DecisionStateMenu trendId={trend.id} currentState={trend.decisionState as DecisionState} />
+            )}
             {trend.bundleVariants && trend.bundleVariants.length > 0 && (
               <span
                 title={trend.bundleVariants.map((v) => v.name).join(', ')}
@@ -635,13 +677,20 @@ export function CompactTrend({ trend }: { trend: TrendWithVariants }) {
           )}
           {!expanded && trend.mindmap && <MindmapTeaser mindmap={trend.mindmap} />}
         </div>
-        <div style={{ flexShrink: 0, padding: '12px 16px', borderLeft: '1px solid #00000010', display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'center', minWidth: 110 }}>
+        <div style={{ flexShrink: 0, padding: '12px 16px', borderLeft: '1px solid #00000010', display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'center', minWidth: 110, alignItems: 'center' }}>
+          {/* vNext: confidence disc above the action buttons */}
+          {flag('VNEXT_CONFIDENCE') && (
+            <div style={{ marginBottom: 4 }}>
+              <ConfidenceDisc trendId={trend.id} score={trend.confidenceScore ?? null} size={42} />
+            </div>
+          )}
           {trend.exampleUrls.slice(0, 2).map((url, i) => {
             const c = classifyUrl(url)
             return (
               <a key={`${url}-${i}`} href={url} target="_blank" rel="noreferrer" style={{
                 fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em',
                 padding: '3px 6px', background: c.bg, color: c.fg, textDecoration: 'none', textAlign: 'center',
+                alignSelf: 'stretch',
               }}>
                 {c.label}
               </a>
@@ -654,6 +703,7 @@ export function CompactTrend({ trend }: { trend: TrendWithVariants }) {
               background: '#FFFDF3', color: '#000', border: '1px solid #00000020',
               fontFamily: 'var(--font-jai-display)', fontSize: 11, padding: '3px 6px',
               cursor: 'pointer', textAlign: 'center', letterSpacing: '0.1em',
+              alignSelf: 'stretch',
             }}
             aria-label={expanded ? 'Collapse' : 'Expand'}
           >
