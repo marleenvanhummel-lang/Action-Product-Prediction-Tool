@@ -32,8 +32,16 @@ export function middleware(request: NextRequest) {
   // The culture report is intentionally public — team forwards it via
   // Slack / WhatsApp / email and external recipients shouldn't need auth.
   const isPublicReport = pathname === '/api/culture/report.html'
+  // Public read access to Culture Radar & Moments: anyone with the URL
+  // should be able to see what's trending — dashboard, magazine, trend
+  // detail pages, sources health. Writes (scrape, extract, briefs,
+  // cron, enrichment, manual submissions) still require auth because
+  // they trigger paid AI calls or modify state.
+  const isPublicCultureRead =
+    request.method === 'GET' &&
+    (pathname.startsWith('/api/culture/') || pathname.startsWith('/api/moments/'))
   const secret = process.env.API_SECRET
-  if (!isSSE && !isAuthRoute && !isPublicReport) {
+  if (!isSSE && !isAuthRoute && !isPublicReport && !isPublicCultureRead) {
     if (!secret) {
       // API_SECRET not configured — reject all API requests in production
       console.error('[Middleware] API_SECRET environment variable is not set')
