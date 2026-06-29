@@ -73,33 +73,33 @@ jobs:
           fi
 
       # ── Phase 2: drain extract queue (Gemini-heavy, may need 2 passes) ────
-      - name: Extract — pass 1
+      - name: Extract — drain queue in small batches
         if: success()
         env:
           BEARER: ${{ secrets.CULTURE_API_SECRET }}
         run: |
           set -euo pipefail
-          echo "Extract pass 1 at $(date -u +%H:%M:%SZ)"
-          curl -sS -o /tmp/p.json -w 'HTTP %{http_code} (%{time_total}s)\n' \
-            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
-            --max-time 320 \
-            -d '{"limit":200,"rerank":true}' \
-            "$BASE_URL/api/culture/extract"
-          jq '{processed, inserted, updated, queueRemaining}' /tmp/p.json || head -c 500 /tmp/p.json
-
-      - name: Extract — pass 2 (drain backlog)
-        if: success()
-        env:
-          BEARER: ${{ secrets.CULTURE_API_SECRET }}
-        run: |
-          set -euo pipefail
-          echo "Extract pass 2 at $(date -u +%H:%M:%SZ)"
-          curl -sS -o /tmp/p.json -w 'HTTP %{http_code} (%{time_total}s)\n' \
-            -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
-            --max-time 320 \
-            -d '{"limit":200,"rerank":true}' \
-            "$BASE_URL/api/culture/extract"
-          jq '{processed, inserted, updated, queueRemaining}' /tmp/p.json || head -c 500 /tmp/p.json
+          # Extract is Gemini-bound (~2.7s per scrape row). A single big
+          # call (the old limit:200) blows past Vercel's 300s function cap
+          # and 504s WITHOUT marking anything processed, so the queue never
+          # drains (June 2026). Loop small batches (45 ≈ 120s) until the
+          # queue is empty or a pass makes no progress. Up to 12 batches
+          # covers ~540 rows — well above a normal day's ~120.
+          for pass in $(seq 1 12); do
+            echo "Extract batch $pass at $(date -u +%H:%M:%SZ)"
+            curl -sS -o /tmp/p.json -w 'HTTP %{http_code} (%{time_total}s)\n' \
+              -X POST -H "Authorization: Bearer $BEARER" -H 'Content-Type: application/json' \
+              --max-time 280 \
+              -d '{"limit":45,"rerank":true}' \
+              "$BASE_URL/api/culture/extract"
+            jq '{processed, inserted, updated, queueRemaining}' /tmp/p.json || head -c 500 /tmp/p.json
+            PROC=$(jq -r '.processed // 0' /tmp/p.json 2>/dev/null || echo 0)
+            QR=$(jq -r '.queueRemaining // 0' /tmp/p.json 2>/dev/null || echo 0)
+            if [ "$PROC" -eq 0 ] || [ "$QR" -eq 0 ]; then
+              echo "Queue drained (processed=$PROC, remaining=$QR)"
+              break
+            fi
+          done
 
       # ── Phase 3: verify (fabricated/generic check), growth scores ─────────
       - name: Verify trends + compute growth
