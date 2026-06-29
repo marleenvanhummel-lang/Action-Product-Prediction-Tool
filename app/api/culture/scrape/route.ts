@@ -166,13 +166,31 @@ export async function POST(req: NextRequest) {
       [ok + failed, ok, failed, jobId],
     )
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
     await sql().query(
       `UPDATE culture_scrape_jobs
           SET status = 'failed', finished_at = NOW(), error = $1
         WHERE id = $2`,
-      [err instanceof Error ? err.message : String(err), jobId],
+      [message, jobId],
     ).catch(() => {})
-    throw err
+    // Return a structured 500 instead of re-throwing. A bare `throw` here
+    // surfaces as an empty-body platform 500 that hides the real cause
+    // (e.g. "project size limit exceeded" when the database is full),
+    // which is exactly what masked the June 2026 outage. Callers and the
+    // GHA cron can now read the error and the partial counts.
+    return NextResponse.json(
+      {
+        ok: false,
+        runId,
+        jobId,
+        error: message,
+        durationMs: Date.now() - started,
+        scraped: ok + failed,
+        okCount: ok,
+        failedCount: failed,
+      },
+      { status: 500 },
+    )
   }
 
   return NextResponse.json({

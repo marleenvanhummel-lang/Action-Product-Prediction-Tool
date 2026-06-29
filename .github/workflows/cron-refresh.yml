@@ -55,9 +55,20 @@ jobs:
             --max-time 320 \
             -d "{\"triggeredBy\":\"gha-${REASON}\"}" \
             "$BASE_URL/api/culture/scrape"
-          jq '{okCount, failedCount, durationMs, jobId}' /tmp/p.json || head -c 500 /tmp/p.json
+          jq '{okCount, failedCount, durationMs, jobId, error}' /tmp/p.json || head -c 500 /tmp/p.json
           if jq -e '.ok != true' /tmp/p.json >/dev/null 2>&1; then
-            echo "::error::Scrape phase reported ok=false"
+            echo "::error::Scrape phase reported ok=false: $(jq -r '.error // "unknown"' /tmp/p.json)"
+            exit 1
+          fi
+          # Hard-fail when every source failed even though the endpoint
+          # returned ok:true. A clean "0 ok / N failed" used to slip through
+          # as a green run and silently starve the dashboard for weeks
+          # (June 2026: empty Firecrawl key + full database). If the whole
+          # fleet fails, that is an outage, not a success.
+          OKC=$(jq -r '.okCount // 0' /tmp/p.json)
+          FAILC=$(jq -r '.failedCount // 0' /tmp/p.json)
+          if [ "$OKC" -eq 0 ] && [ "$FAILC" -gt 0 ]; then
+            echo "::error::Scrape phase scraped 0 sources OK out of $FAILC attempted — treating as outage"
             exit 1
           fi
 
