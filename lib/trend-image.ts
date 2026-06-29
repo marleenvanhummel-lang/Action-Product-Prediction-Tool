@@ -67,6 +67,16 @@ export async function generateHeroImage(t: ImageInput): Promise<ImageResult> {
     )
   `)
 
+  // GC old generations (>7 days) up front, independent of whether the
+  // cache hits or a new image is written below. Previously this ran only
+  // after a successful INSERT, so once the database filled up (June 2026)
+  // the INSERT threw, the GC never ran, and 200+ MB of stale base64
+  // images stayed pinned forever — the deadlock that kept the DB full.
+  await sql().query(
+    `DELETE FROM culture_trend_images
+      WHERE generated_date < CURRENT_DATE - INTERVAL '7 days'`,
+  ).catch(() => {})
+
   // Check cache
   const cached = (await sql().query(
     `SELECT data_url FROM culture_trend_images
@@ -99,12 +109,6 @@ export async function generateHeroImage(t: ImageInput): Promise<ImageResult> {
          data_url = EXCLUDED.data_url,
          prompt = EXCLUDED.prompt`,
       [t.trendId, dataUrl, prompt],
-    )
-
-    // GC old generations (>7 days)
-    await sql().query(
-      `DELETE FROM culture_trend_images
-        WHERE generated_date < CURRENT_DATE - INTERVAL '7 days'`,
     )
 
     return { dataUrl, cached: false, prompt }
